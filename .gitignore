@@ -1,0 +1,6 @@
+build/
+*.lastip
+*.config
+.cache/
+compile_commands.json
+.clangd/

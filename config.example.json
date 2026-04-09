@@ -1,0 +1,40 @@
+{
+    "general": {
+        "get_ip": {
+            "interface": "eth0",
+            "urls": [
+                "https://ipv6.icanhazip.com",
+                "https://6.ipw.cn",
+                "https://v6.ipv6-test.com/api/myip.php"
+            ]
+        },
+        "work_dir": "/opt/dynip",
+        "log_output": "shell",
+        "proxy": ""
+    },
+    "records": [
+        {
+            "provider": "cloudflare",
+            "zone": "example.com",
+            "record": "dev",
+            "ttl": 300,
+            "proxied": false,
+            "use_proxy": false,
+            "cloudflare": {
+                "api_token": "${CLOUDFLARE_API_TOKEN}",
+                "zone_id": "${CLOUDFLARE_ZONE_ID:-}"
+            }
+        },
+        {
+            "provider": "aliyun",
+            "zone": "example.cn",
+            "record": "www",
+            "ttl": 600,
+            "use_proxy": false,
+            "aliyun": {
+                "access_key_id": "${ALIYUN_ACCESS_KEY_ID}",
+                "access_key_secret": "${ALIYUN_ACCESS_KEY_SECRET}"
+            }
+        }
+    ]
+}
