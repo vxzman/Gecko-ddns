@@ -70,8 +70,11 @@ set(SOURCES
 )
 
 # Platform-specific sources
-if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
-    list(APPEND SOURCES src/ip_getter_freebsd.cpp)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    # macOS uses the same BSD-style implementation
+    list(APPEND SOURCES src/ip_getter_bsd.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+    list(APPEND SOURCES src/ip_getter_bsd.cpp)
 endif()
 
 add_executable(alasia ${SOURCES})

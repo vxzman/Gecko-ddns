@@ -1,20 +1,24 @@
-// FreeBSD/OpenBSD ioctl implementation for IPv6 address retrieval
+// BSD-family (macOS/FreeBSD/OpenBSD) ioctl implementation for IPv6 address retrieval
 // Reference: goddns/internal/platform/ifaddr/freebsd_ioctl.go
 
 #include "ip_getter.hpp"
 #include "log.hpp"
 
-#if defined(__FreeBSD__) || defined(__OpenBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 
 #include <arpa/inet.h>
 #include <net/if.h>
+#include <ifaddrs.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <cstring>
 #include <ctime>
-#include <sstream>
 #include <string>
 #include <vector>
+
+#if defined(__APPLE__)
+#include <netinet6/in6_var.h>
+#endif
 
 #if defined(__FreeBSD__)
 #include <netinet6/in6_var.h>
@@ -41,7 +45,29 @@ static int get_ipv6_lifetime(const std::string& ifname,
         return -1;
     }
 
-#if defined(__FreeBSD__)
+#if defined(__APPLE__)
+    // macOS uses in6_ifreq with slightly different structure layout
+    struct in6_ifreq ifr6;
+    memset(&ifr6, 0, sizeof(ifr6));
+    strncpy(ifr6.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
+    ifr6.ifr_addr = sin6;
+
+    if (ioctl(s, SIOCGIFALIFETIME_IN6, &ifr6) == -1) {
+        close(s);
+        return -1;
+    }
+
+    struct in6_addrlifetime lt = ifr6.ifr_ifru.ifru_lifetime;
+    time_t now = time(nullptr);
+
+    pltime_out = (lt.ia6t_preferred != (time_t)-1 && lt.ia6t_preferred > now)
+                     ? (uint32_t)(lt.ia6t_preferred - now)
+                     : ND6_INFINITE_LIFETIME;
+    vltime_out = (lt.ia6t_expire != (time_t)-1 && lt.ia6t_expire > now)
+                     ? (uint32_t)(lt.ia6t_expire - now)
+                     : ND6_INFINITE_LIFETIME;
+
+#elif defined(__FreeBSD__)
     struct in6_ifreq ifr6;
     memset(&ifr6, 0, sizeof(ifr6));
     strncpy(ifr6.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
@@ -64,13 +90,7 @@ static int get_ipv6_lifetime(const std::string& ifname,
 
 #elif defined(__OpenBSD__)
     // OpenBSD uses different ioctl interface
-    struct in6_ifreq ifr6;
-    memset(&ifr6, 0, sizeof(ifr6));
-    strncpy(ifr6.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
-    ifr6.ifr_addr = sin6;
-
-    // Try to get address lifetime
-    // Note: OpenBSD may not support SIOCGIFALIFETIME_IN6
+    // Note: OpenBSD may not fully support SIOCGIFALIFETIME_IN6
     // Fall back to infinite lifetime if not available
     pltime_out = ND6_INFINITE_LIFETIME;
     vltime_out = ND6_INFINITE_LIFETIME;
@@ -82,29 +102,27 @@ static int get_ipv6_lifetime(const std::string& ifname,
 
 } // anonymous namespace
 
-std::vector<IPv6Info> get_from_interface(const std::string& iface_name,
-                                          std::string&       error_out) {
+std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string_view iface_name) {
     // Check if interface exists
-    if (if_nametoindex(iface_name.c_str()) == 0) {
-        error_out = "Interface not found: " + iface_name;
-        return {};
+    if (if_nametoindex(iface_name.data()) == 0) {
+        return std::unexpected(std::string("Interface not found: ") + std::string(iface_name));
     }
 
     // Use getifaddrs to enumerate addresses
     struct ifaddrs *ifap = nullptr, *ifa;
     if (getifaddrs(&ifap) == -1) {
-        error_out = std::string("getifaddrs() failed: ") + strerror(errno);
-        return {};
+        return std::unexpected(std::string("getifaddrs() failed: ") + strerror(errno));
     }
 
     std::vector<IPv6Info> result;
+    std::string ifname(iface_name);
 
     for (ifa = ifap; ifa != nullptr; ifa = ifa->ifa_next) {
         // Skip if no address
         if (ifa->ifa_addr == nullptr) continue;
 
         // Skip if not matching interface name
-        if (strcmp(ifa->ifa_name, iface_name.c_str()) != 0) continue;
+        if (strcmp(ifa->ifa_name, ifname.c_str()) != 0) continue;
 
         // Skip if not IPv6
         if (ifa->ifa_addr->sa_family != AF_INET6) continue;
@@ -124,7 +142,7 @@ std::vector<IPv6Info> get_from_interface(const std::string& iface_name,
         // Get lifetime information
         uint32_t pltime = ND6_INFINITE_LIFETIME;
         uint32_t vltime = ND6_INFINITE_LIFETIME;
-        get_ipv6_lifetime(iface_name, *sin6, pltime, vltime);
+        get_ipv6_lifetime(ifname, *sin6, pltime, vltime);
 
         // Create IPv6Info
         IPv6Info info;
@@ -146,7 +164,7 @@ std::vector<IPv6Info> get_from_interface(const std::string& iface_name,
     freeifaddrs(ifap);
 
     if (result.empty()) {
-        error_out = "No suitable IPv6 address on interface " + iface_name;
+        return std::unexpected("No suitable IPv6 address on interface " + std::string(iface_name));
     }
 
     return result;
@@ -154,4 +172,4 @@ std::vector<IPv6Info> get_from_interface(const std::string& iface_name,
 
 } // namespace ip_getter
 
-#endif // __FreeBSD__ || __OpenBSD__
+#endif // __APPLE__ || __FreeBSD__ || __OpenBSD__

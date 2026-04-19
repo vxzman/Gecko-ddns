@@ -1,7 +1,7 @@
 # alasia — 动态 DNS 客户端 (C++23)
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20FreeBSD%20%7C%20OpenBSD-blue)](README.md)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20FreeBSD%20%7C%20OpenBSD%20%7C%20macOS-yellow)](README.md)
 [![Standard](https://img.shields.io/badge/C%2B%2B-23-blue)](README.md)
 
 [alasia](./alasia) 是一个用 C++23 编写的轻量级动态 DNS (DDNS) 客户端，支持多域名、多服务商、IPv6，具备跨平台能力和丰富的日志输出。
@@ -13,7 +13,7 @@
 - **阿里云 DNS**：HMAC-SHA1 签名，AAAA 记录自动创建/更新
 - **IPv6 支持**：
   - Linux：netlink 接口
-  - FreeBSD/OpenBSD：ioctl 接口
+  - FreeBSD/OpenBSD/macOS：ioctl 接口
   - 所有平台：HTTP API 降级
 - **代理支持**：HTTP/HTTPS/SOCKS5（仅 Cloudflare）
 - **IP 缓存**：避免重复 API 调用
@@ -37,6 +37,11 @@ pkg install cmake gcc curl openssl
 pkg_add cmake curl openssl
 ```
 
+### macOS
+```bash
+brew install cmake curl openssl
+```
+
 > `nlohmann/json` 和 `argparse` 由 CMake FetchContent 自动拉取，无需手动安装。
 
 ## 构建
@@ -58,6 +63,20 @@ cmake --build build -j$(nproc)
 ```bash
 CXX=clang++ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
+```
+
+### macOS 构建
+
+macOS 默认使用 clang++，需要指定 OpenSSL 路径：
+
+```bash
+# 安装依赖
+brew install cmake curl openssl
+
+# 构建时指定 OpenSSL 路径
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DOPENSSL_ROOT_DIR=$(brew --prefix openssl)
+cmake --build build -j$(sysctl -n hw.ncpu)
 ```
 
 ### 带版本信息构建
@@ -283,6 +302,88 @@ sudo crontab -e
 
 > **提示**：根据实际需求调整执行频率。
 
+---
+
+### macOS launchd 定时
+
+macOS 使用 `launchd` 管理后台任务，支持开机启动和定时执行。
+
+#### 1. 创建配置文件
+
+```bash
+sudo mkdir -p /etc/alasia
+sudo nano /etc/alasia/config.json
+```
+
+#### 2. 创建 launchd plist
+
+创建 `/Library/LaunchDaemons/com.alasia.plist`：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alasia</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/alasia</string>
+        <string>run</string>
+        <string>-f</string>
+        <string>/etc/alasia/config.json</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CLOUDFLARE_API_TOKEN</key>
+        <string>your_token_here</string>
+        <key>ALIYUN_ACCESS_KEY_ID</key>
+        <string>your_access_key_id</string>
+        <key>ALIYUN_ACCESS_KEY_SECRET</key>
+        <string>your_access_key_secret</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>300</integer>  <!-- 每 300 秒（5 分钟）执行一次 -->
+    <key>RunAtLoad</key>
+    <true/>  <!-- 加载时立即执行一次 -->
+    <key>StandardOutPath</key>
+    <string>/var/log/alasia.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/alasia.log</string>
+</dict>
+</plist>
+```
+
+#### 3. 加载并启动
+
+```bash
+# 设置正确权限
+sudo chown root:wheel /Library/LaunchDaemons/com.alasia.plist
+sudo chmod 644 /Library/LaunchDaemons/com.alasia.plist
+
+# 加载服务
+sudo launchctl load /Library/LaunchDaemons/com.alasia.plist
+
+# 验证服务状态
+sudo launchctl list | grep alasia
+```
+
+#### 4. 管理服务
+
+```bash
+# 停止服务
+sudo launchctl unload /Library/LaunchDaemons/com.alasia.plist
+
+# 重新加载（修改配置后）
+sudo launchctl unload /Library/LaunchDaemons/com.alasia.plist
+sudo launchctl load /Library/LaunchDaemons/com.alasia.plist
+
+# 查看日志
+tail -f /var/log/alasia.log
+```
+
+> **提示**：`StartInterval` 单位为秒，300 表示每 5 分钟执行一次。也可使用 `StartCalendarInterval` 实现类似 cron 的定时表达式。
+
 ## 目录结构
 
 ```
@@ -297,8 +398,8 @@ alasia/
     ├── log.hpp / log.cpp
     ├── config.hpp / config.cpp
     ├── cache.hpp / cache.cpp
-    ├── ip_getter.hpp / ip_getter.cpp
-    ├── ip_getter_freebsd.cpp  # FreeBSD/OpenBSD ioctl 实现
+    ├── ip_getter.hpp / ip_getter.cpp      # Linux netlink + HTTP API
+    ├── ip_getter_bsd.cpp                  # macOS/FreeBSD/OpenBSD ioctl
     └── provider/
         ├── provider.hpp
         ├── cloudflare.hpp / cloudflare.cpp
@@ -312,7 +413,9 @@ alasia/
 | Linux | netlink (`RTM_GETADDR`) | ✅ 完整支持 |
 | FreeBSD | ioctl (`SIOCGIFALIFETIME_IN6`) | ✅ 支持 |
 | OpenBSD | ioctl (`getifaddrs`) | ✅ 支持 |
-| macOS | - | ⚠️ 暂无支持 |
+| macOS | ioctl (`SIOCGIFALIFETIME_IN6`) | ⚠️ **实验性支持** |
+
+> **macOS 说明**：macOS 支持目前为实验性质，作者无 Mac 设备进行测试。理论上代码可正常工作，但可能有未发现问题。欢迎 Mac 用户测试并反馈。
 
 所有平台均支持 HTTP API 降级方式获取 IPv6 地址。
 
