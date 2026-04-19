@@ -5,7 +5,7 @@ VERSION="${1:-dev}"
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-echo "Building dynip ${VERSION} ..."
+echo "Building alasia ${VERSION} ..."
 
 cmake -B build \
     -DCMAKE_BUILD_TYPE=Release \
@@ -15,4 +15,4 @@ cmake -B build \
 
 cmake --build build -j"$(nproc)"
 
-echo "Build successful: $(pwd)/build/dynip"
+echo "Build successful: $(pwd)/build/alasia"

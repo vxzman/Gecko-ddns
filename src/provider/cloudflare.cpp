@@ -1,7 +1,7 @@
 #include "cloudflare.hpp"
+#include "../curl_pool.hpp"
 #include "../log.hpp"
 
-#include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -32,7 +32,9 @@ auto CloudflareProvider::cf_request(const std::string& method,
     constexpr int MAX_RETRIES = 3;
 
     for (int attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
-        CURL* curl = curl_easy_init();
+        // Acquire CURL handle from connection pool
+        auto curl_handle = curl_pool::ConnectionPool::instance().acquire();
+        CURL* curl = curl_handle.get();
         if (!curl) return std::unexpected("curl_easy_init failed");
 
         std::string response_body;
@@ -41,7 +43,6 @@ auto CloudflareProvider::cf_request(const std::string& method,
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
         // Auth & content-type headers
         struct curl_slist* headers = nullptr;
@@ -74,7 +75,7 @@ auto CloudflareProvider::cf_request(const std::string& method,
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
         curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
+        // Handle is automatically returned to pool via RAII
 
         if (res != CURLE_OK) {
             if (attempt < MAX_RETRIES) {

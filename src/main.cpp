@@ -2,6 +2,7 @@
 #include "config.hpp"
 #include "cache.hpp"
 #include "ip_getter.hpp"
+#include "curl_pool.hpp"
 #include "provider/cloudflare.hpp"
 #include "provider/aliyun.hpp"
 
@@ -30,16 +31,23 @@
 #endif
 
 // ─── Signal handling ──────────────────────────────────────────────────────────
-static std::stop_source g_stop_source;
+// Use volatile sig_atomic_t for async-signal-safe flag
+// std::stop_source::request_stop() is NOT async-signal-safe
+static volatile sig_atomic_t g_shutdown_requested = 0;
 
 static void signal_handler(int) {
-    g_stop_source.request_stop();
+    g_shutdown_requested = 1;
+}
+
+// Check if shutdown was requested (async-signal-safe)
+static bool is_shutdown_requested() {
+    return g_shutdown_requested != 0;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 static void print_version() {
-    std::cout << "dynip " APP_VERSION "\n";
+    std::cout << "alasia " APP_VERSION "\n";
     if (std::string(APP_COMMIT).size() > 0)
         std::cout << "commit: " APP_COMMIT "\n";
     if (std::string(APP_BUILD_DATE).size() > 0)
@@ -54,15 +62,16 @@ struct UpdateResult {
     std::string error;
 };
 
-static UpdateResult update_single_record(std::stop_token            stoken,
-                                          const config::Config&       cfg,
-                                          const config::RecordConfig& rec,
-                                          const std::string&          current_ip,
-                                          const std::string&          zone_id_cache_file) {
+static UpdateResult update_single_record(
+    const config::Config&       cfg,
+    const config::RecordConfig& rec,
+    const std::string&          current_ip,
+    const std::string&          zone_id_cache_file,
+    const std::atomic<bool>&    timed_out) {
     UpdateResult result;
     result.record_name = rec.record + "." + rec.zone;
 
-    if (stoken.stop_requested()) {
+    if (timed_out.load() || is_shutdown_requested()) {
         result.error = "shutdown requested";
         return result;
     }
@@ -89,6 +98,12 @@ static UpdateResult update_single_record(std::stop_token            stoken,
 
         // Auto-fetch zone_id if not set (try cache first)
         if (zone_id.empty()) {
+            // Check timeout/shutdown before cache read
+            if (timed_out.load() || is_shutdown_requested()) {
+                result.error = "shutdown requested";
+                return result;
+            }
+
             // Try to read from ZoneID cache
             auto cached_zone_ids = config::read_zone_id_cache(zone_id_cache_file);
             auto it = cached_zone_ids.find(rec.zone);
@@ -99,6 +114,12 @@ static UpdateResult update_single_record(std::stop_token            stoken,
         }
 
         if (zone_id.empty()) {
+            // Check timeout/shutdown before API call
+            if (timed_out.load() || is_shutdown_requested()) {
+                result.error = "shutdown requested";
+                return result;
+            }
+
             logger::info("Zone ID not configured, fetching for zone: {}", rec.zone);
             auto z_res = provider.get_zone_id(rec.zone, "");
             if (!z_res) {
@@ -113,6 +134,12 @@ static UpdateResult update_single_record(std::stop_token            stoken,
             if (!config::update_zone_id_cache(zone_id_cache_file, rec.zone, zone_id)) {
                 logger::warning("Warning: failed to save Zone ID cache");
             }
+        }
+
+        // Check timeout/shutdown before upsert
+        if (timed_out.load() || is_shutdown_requested()) {
+            result.error = "shutdown requested";
+            return result;
         }
 
         auto ok = provider.upsert_record_with_zone_id(
@@ -136,6 +163,12 @@ static UpdateResult update_single_record(std::stop_token            stoken,
         }
 
         if (rec.aliyun->ttl > 0) ttl = rec.aliyun->ttl;
+
+        // Check timeout/shutdown before API call
+        if (timed_out.load() || is_shutdown_requested()) {
+            result.error = "shutdown requested";
+            return result;
+        }
 
         auto provider = provider::AliyunProvider(
             rec.aliyun->access_key_id, rec.aliyun->access_key_secret);
@@ -163,6 +196,12 @@ static UpdateResult update_single_record(std::stop_token            stoken,
 // ─── Run command ──────────────────────────────────────────────────────────────
 
 static int run_cmd(const std::string& config_path, bool ignore_cache, int timeout_sec) {
+    // Initialize CURL connection pool
+    if (!curl_pool::initialize()) {
+        std::cerr << "Failed to initialize libcurl\n";
+        return 1;
+    }
+
     // Register signal handlers
     std::signal(SIGINT,  signal_handler);
     std::signal(SIGTERM, signal_handler);
@@ -172,6 +211,7 @@ static int run_cmd(const std::string& config_path, bool ignore_cache, int timeou
     auto abs_config = std::filesystem::absolute(config_path, ec);
     if (ec) {
         std::cerr << "Failed to resolve config path: " << ec.message() << "\n";
+        curl_pool::cleanup();
         return 1;
     }
 
@@ -179,6 +219,7 @@ static int run_cmd(const std::string& config_path, bool ignore_cache, int timeou
     auto cfg_opt = config::read_config(abs_config.string());
     if (!cfg_opt) {
         std::cerr << "Failed to load configuration\n";
+        curl_pool::cleanup();
         return 1;
     }
     config::Config cfg = std::move(*cfg_opt);
@@ -186,10 +227,11 @@ static int run_cmd(const std::string& config_path, bool ignore_cache, int timeou
     // Init logging
     if (!logger::init(cfg.general.log_output)) {
         std::cerr << "Failed to initialize logging\n";
+        curl_pool::cleanup();
         return 1;
     }
 
-    logger::info("dynip starting with {} record(s)", cfg.records.size());
+    logger::info("alasia starting with {} record(s)", cfg.records.size());
 
     // ── Get current IPv6 ──────────────────────────────────────────────────────
     std::expected<std::vector<ip_getter::IPv6Info>, std::string> infos_res;
@@ -235,27 +277,39 @@ static int run_cmd(const std::string& config_path, bool ignore_cache, int timeou
     // ── Update all records in parallel ────────────────────────────────────────
     std::string              zone_id_cache_file = config::get_zone_id_cache_path(abs_config.string());
     std::vector<UpdateResult> results(cfg.records.size());
-    std::vector<std::jthread> threads;
+    std::vector<std::thread> threads;
     threads.reserve(cfg.records.size());
 
+    // Atomic flag for timeout (shared across threads)
+    std::atomic<bool> timed_out = false;
+
     for (size_t i = 0; i < cfg.records.size(); ++i) {
-        threads.emplace_back([&, i](std::stop_token st) {
-            results[i] = update_single_record(st, cfg, cfg.records[i], current_ip, zone_id_cache_file);
+        threads.emplace_back([&, i]() {
+            results[i] = update_single_record(cfg, cfg.records[i], current_ip, zone_id_cache_file, timed_out);
         });
     }
 
-    // Wait for threads with timeout
+    // Wait for threads with timeout - check at intervals
     auto start = std::chrono::steady_clock::now();
+    const auto check_interval = std::chrono::milliseconds(100);
     for (auto& t : threads) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start).count();
-        if (elapsed >= timeout_sec) {
+        // Wait for this thread with periodic timeout checks
+        auto remaining = std::chrono::seconds(timeout_sec) - (std::chrono::steady_clock::now() - start);
+        if (remaining <= std::chrono::seconds::zero()) {
+            timed_out.store(true);
             logger::warning("Timeout reached ({} seconds), forcing shutdown", timeout_sec);
-            g_stop_source.request_stop();
             break;
         }
-        if (t.joinable()) {
-            t.join();
+
+        // Use a simple join with periodic checks
+        // Note: std::jthread would be cleaner but requires C++20 stop_token
+        t.join();
+
+        // Check timeout after each thread completes
+        if (is_shutdown_requested()) {
+            timed_out.store(true);
+            logger::warning("Shutdown requested, stopping remaining threads");
+            break;
         }
     }
 
@@ -275,11 +329,14 @@ static int run_cmd(const std::string& config_path, bool ignore_cache, int timeou
         }
     }
 
+    // Cleanup CURL connection pool
+    curl_pool::cleanup();
+
     return fail_count > 0 ? 1 : 0;
 }
 
 int main(int argc, char* argv[]) {
-    argparse::ArgumentParser program("dynip", APP_VERSION);
+    argparse::ArgumentParser program("alasia", APP_VERSION);
     program.add_description("强大的动态 DNS 客户端 - 支持多域名多服务商");
 
     // ── Sub-command: run ──────────────────────────────────────────────────────

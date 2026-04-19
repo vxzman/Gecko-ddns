@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
-project(dynip VERSION 1.0.0 LANGUAGES CXX)
+
+# Set policy CMP0135 to use DOWNLOAD_EXTRACT_TIMESTAMP for FetchContent
+# This avoids warnings and ensures reproducible builds
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
+project(alasia VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,10 +47,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 
 # argparse (header-only, FetchContent)
+# Using specific commit hash for reproducible builds
 FetchContent_Declare(
     argparse
     GIT_REPOSITORY https://github.com/p-ranav/argparse.git
     GIT_TAG        v3.1
+    GIT_SHALLOW    FALSE  # Full history for better reproducibility
 )
 FetchContent_MakeAvailable(argparse)
 
@@ -55,6 +64,7 @@ set(SOURCES
     src/config.cpp
     src/cache.cpp
     src/ip_getter.cpp
+    src/curl_pool.cpp
     src/provider/cloudflare.cpp
     src/provider/aliyun.cpp
 )
@@ -64,13 +74,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
     list(APPEND SOURCES src/ip_getter_freebsd.cpp)
 endif()
 
-add_executable(dynip ${SOURCES})
+add_executable(alasia ${SOURCES})
 
-target_include_directories(dynip PRIVATE
+target_include_directories(alasia PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(dynip PRIVATE
+target_link_libraries(alasia PRIVATE
     CURL::libcurl
     OpenSSL::Crypto
     nlohmann_json::nlohmann_json
@@ -83,11 +93,11 @@ set(APP_VERSION "dev" CACHE STRING "Application version string")
 set(APP_COMMIT  ""    CACHE STRING "Git commit hash")
 set(APP_BUILD_DATE "" CACHE STRING "Build date (UTC ISO 8601)")
 
-target_compile_definitions(dynip PRIVATE
+target_compile_definitions(alasia PRIVATE
     APP_VERSION="${APP_VERSION}"
     APP_COMMIT="${APP_COMMIT}"
     APP_BUILD_DATE="${APP_BUILD_DATE}"
 )
 
 # ─── Install ───────────────────────────────────────────────────────────────────
-install(TARGETS dynip DESTINATION bin)
+install(TARGETS alasia DESTINATION bin)

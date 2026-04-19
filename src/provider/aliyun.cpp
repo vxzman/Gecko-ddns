@@ -1,4 +1,5 @@
 #include "aliyun.hpp"
+#include "../curl_pool.hpp"
 #include "../log.hpp"
 
 #include <curl/curl.h>
@@ -138,7 +139,9 @@ auto AliyunProvider::sign_and_request(
 
     constexpr int MAX_RETRIES = 3;
     for (int attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
-        CURL* curl = curl_easy_init();
+        // Acquire CURL handle from connection pool
+        auto curl_handle = curl_pool::ConnectionPool::instance().acquire();
+        CURL* curl = curl_handle.get();
         if (!curl) return std::unexpected("curl_easy_init failed");
 
         std::string body;
@@ -150,7 +153,7 @@ auto AliyunProvider::sign_and_request(
         CURLcode res = curl_easy_perform(curl);
         long code = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-        curl_easy_cleanup(curl);
+        // Handle is automatically returned to pool via RAII
 
         if (res != CURLE_OK) {
             if (attempt < MAX_RETRIES) {

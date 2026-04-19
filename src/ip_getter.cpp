@@ -1,4 +1,5 @@
 #include "ip_getter.hpp"
+#include "curl_pool.hpp"
 #include "log.hpp"
 
 // Linux netlink headers (only on Linux)
@@ -201,7 +202,9 @@ static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
     constexpr int MAX_RETRIES = 2;
 
     for (int attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
-        CURL* curl = curl_easy_init();
+        // Acquire CURL handle from connection pool
+        auto curl_handle = curl_pool::ConnectionPool::instance().acquire();
+        CURL* curl = curl_handle.get();
         if (!curl) { err = "curl_easy_init failed"; return ""; }
 
         std::string body;
@@ -209,13 +212,12 @@ static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V6); // force IPv6
 
         CURLcode res = curl_easy_perform(curl);
         long http_code = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-        curl_easy_cleanup(curl);
+        // Handle is automatically returned to pool via RAII
 
         if (res != CURLE_OK) {
             err = curl_easy_strerror(res);

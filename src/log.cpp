@@ -38,14 +38,39 @@ std::string timestamp() {
 }
 
 std::string sanitize(const std::string& msg) {
+    std::string out = msg;
+    
+    // Pattern 1: API tokens, secrets (20+ chars)
+    // Matches: token=xxx, api_key=xxx, secret=xxx, api-token=xxx, etc.
     static const std::regex token_re(
-        R"((?:token|api[_\-]?key|secret)[\s:=]+'?"?([a-zA-Z0-9_\-]{20,})'?"?)",
+        R"(((?:token|api[_\-]?key|secret|auth)[\s:=]+)['\"]?([a-zA-Z0-9_\-]{20,})['\"]?)",
         std::regex::icase);
+    out = std::regex_replace(out, token_re, "$1***REDACTED***");
+    
+    // Pattern 2: Access Key ID (Alibaba Cloud style: LTAI + 12+ chars)
     static const std::regex ak_re(
-        R"((?:access[_\-]?key[_\-]?id)[\s:=]+'?"?([a-zA-Z0-9]{12,})'?"?)",
+        R"(((?:access[_\-]?key[_\-]?id|ak)[\s:=]+)['\"]?(LTAI[a-zA-Z0-9]{8,})['\"]?)",
         std::regex::icase);
-    std::string out = std::regex_replace(msg, token_re, "***REDACTED***");
-    out = std::regex_replace(out, ak_re, "***REDACTED***");
+    out = std::regex_replace(out, ak_re, "$1***REDACTED***");
+    
+    // Pattern 3: Generic key=value with long alphanumeric values (potential secrets)
+    static const std::regex kv_re(
+        R"(((?:password|passwd|pwd|credential|private[_\-]?key)[\s:=]+)['\"]?([a-zA-Z0-9_\-+/]{8,})['\"]?)",
+        std::regex::icase);
+    out = std::regex_replace(out, kv_re, "$1***REDACTED***");
+    
+    // Pattern 4: Bearer tokens in headers
+    static const std::regex bearer_re(
+        R"(Bearer\s+[a-zA-Z0-9_\-\.]+)",
+        std::regex::icase);
+    out = std::regex_replace(out, bearer_re, "Bearer ***REDACTED***");
+    
+    // Pattern 5: Base64-like strings that might be credentials (40+ chars)
+    // Only redact if they look like they could be secrets
+    static const std::regex base64_re(
+        R"([A-Za-z0-9+/]{40,}={0,2})");
+    out = std::regex_replace(out, base64_re, "***REDACTED***");
+    
     return out;
 }
 

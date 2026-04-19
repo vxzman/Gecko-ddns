@@ -8,6 +8,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <sys/stat.h>
 
 namespace fs = std::filesystem;
 using json   = nlohmann::json;
@@ -236,7 +237,7 @@ std::optional<Config> read_config(const std::string& path) {
         logger::error("  1. 缺少逗号 (,) - 在对象或数组的元素之间需要逗号分隔");
         logger::error("  2. 多余逗号 - 最后一个元素后不应有逗号");
         logger::error("  3. 引号问题 - 键和字符串值必须使用双引号 \"\"，不能使用单引号");
-        logger::error("  4. 括号不匹配 - 检查 {} 和 [] 是否正确配对");
+        logger::error("  4. 括号不匹配 - 检查 {{}} 和 [] 是否正确配对");
         logger::error("  5. 使用了注释 - JSON 标准不支持注释");
         logger::error("  6. 特殊字符未转义 - 如字符串中的引号需要转义");
         logger::error("");
@@ -347,14 +348,25 @@ bool write_config(const std::string& path, const Config& cfg) {
         rj["use_proxy"] = r.use_proxy;
 
         if (r.cloudflare) {
-            rj["cloudflare"]["api_token"] = r.cloudflare->api_token;
-            rj["cloudflare"]["zone_id"]   = r.cloudflare->zone_id;
+            // Use raw values to avoid writing plaintext secrets
+            // Only write environment variable references (e.g., ${VAR})
+            rj["cloudflare"]["api_token"] = r._raw_cloudflare_api_token.empty() 
+                ? r.cloudflare->api_token 
+                : r._raw_cloudflare_api_token;
+            rj["cloudflare"]["zone_id"]   = r._raw_cloudflare_zone_id.empty()
+                ? r.cloudflare->zone_id
+                : r._raw_cloudflare_zone_id;
             rj["cloudflare"]["proxied"]   = r.cloudflare->proxied;
             rj["cloudflare"]["ttl"]       = r.cloudflare->ttl;
         }
         if (r.aliyun) {
-            rj["aliyun"]["access_key_id"]     = r.aliyun->access_key_id;
-            rj["aliyun"]["access_key_secret"] = r.aliyun->access_key_secret;
+            // Use raw values to avoid writing plaintext secrets
+            rj["aliyun"]["access_key_id"]     = r._raw_aliyun_access_key_id.empty()
+                ? r.aliyun->access_key_id
+                : r._raw_aliyun_access_key_id;
+            rj["aliyun"]["access_key_secret"] = r._raw_aliyun_access_key_secret.empty()
+                ? r.aliyun->access_key_secret
+                : r._raw_aliyun_access_key_secret;
             rj["aliyun"]["ttl"]               = r.aliyun->ttl;
         }
         root["records"].push_back(std::move(rj));
@@ -475,7 +487,14 @@ bool update_zone_id_cache(const std::string& path, const std::string& zone, cons
     std::ofstream f_out(path);
     if (!f_out.is_open()) return false;
     f_out << j.dump(4) << "\n";
-    return f_out.good();
+    if (!f_out.good()) return false;
+    f_out.close();
+    
+    // Set file permissions to 0600 (owner read/write only)
+    if (chmod(path.c_str(), S_IRUSR | S_IWUSR) != 0) {
+        return false;
+    }
+    return true;
 }
 
 } // namespace config

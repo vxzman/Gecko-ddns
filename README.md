@@ -1,10 +1,10 @@
-# dynip — 动态 DNS 客户端 (C++23)
+# alasia — 动态 DNS 客户端 (C++23)
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20FreeBSD%20%7C%20OpenBSD-blue)](README.md)
 [![Standard](https://img.shields.io/badge/C%2B%2B-23-blue)](README.md)
 
-[dynip](./dynip) 是一个用 C++23 编写的轻量级动态 DNS (DDNS) 客户端，支持多域名、多服务商、IPv6，具备跨平台能力和丰富的日志输出。
+[alasia](./alasia) 是一个用 C++23 编写的轻量级动态 DNS (DDNS) 客户端，支持多域名、多服务商、IPv6，具备跨平台能力和丰富的日志输出。
 
 ## 特性
 
@@ -18,6 +18,7 @@
 - **代理支持**：HTTP/HTTPS/SOCKS5（仅 Cloudflare）
 - **IP 缓存**：避免重复 API 调用
 - **彩色日志**：终端下分级彩色显示，支持文件输出
+- **CURL 连接池**：线程局部缓存，TCP Keepalive，提升多域名场景性能
 
 ## 系统依赖
 
@@ -77,20 +78,20 @@ cmake --build build -j$(nproc)
 
 ```bash
 # 更新 DNS 记录（使用缓存，IP 未变则跳过）
-./build/dynip run -f config.json
+./build/alasia run -f config.json
 
 # 强制更新（忽略缓存）
-./build/dynip run -f config.json -i
+./build/alasia run -f config.json -i
 
 # 查看版本
-./build/dynip version
+./build/alasia version
 ```
 
 ## 配置文件
 
 ### 安全性要求
 
-**重要**：出于安全考虑，dynip **禁止在配置文件中明文存储密钥信息**。
+**重要**：出于安全考虑，alasia **禁止在配置文件中明文存储密钥信息**。
 所有敏感信息（API Token、AccessKey 等）必须使用环境变量引用。
 
 ❌ 错误示例（明文密钥，会被拒绝执行）：
@@ -117,7 +118,7 @@ cmake --build build -j$(nproc)
 export CLOUDFLARE_API_TOKEN="your_token_here"
 export ALIYUN_ACCESS_KEY_ID="LTAI1234567890"
 export ALIYUN_ACCESS_KEY_SECRET="your_secret_here"
-./build/dynip run -f config.json
+./build/alasia run -f config.json
 ```
 
 ### 配置示例
@@ -193,14 +194,14 @@ export ALIYUN_ACCESS_KEY_SECRET="your_secret_here"
 #### 1. 创建配置文件
 
 ```bash
-sudo mkdir -p /etc/dynip
-sudo nano /etc/dynip/config.json
+sudo mkdir -p /etc/alasia
+sudo nano /etc/alasia/config.json
 ```
 
 #### 2. 创建 systemd 服务和定时器
 
 ```ini
-# /etc/systemd/system/dynip.service
+# /etc/systemd/system/alasia.service
 [Unit]
 Description=Dynamic DNS client
 After=network.target
@@ -208,10 +209,10 @@ After=network.target
 [Service]
 Type=oneshot
 Environment="CLOUDFLARE_API_TOKEN=your_token_here"
-ExecStart=/usr/local/bin/dynip run -f /etc/dynip/config.json
-WorkingDirectory=/etc/dynip
-StandardOutput=append:/var/log/dynip.log
-StandardError=append:/var/log/dynip.log
+ExecStart=/usr/local/bin/alasia run -f /etc/alasia/config.json
+WorkingDirectory=/etc/alasia
+StandardOutput=append:/var/log/alasia.log
+StandardError=append:/var/log/alasia.log
 Restart=no
 
 [Install]
@@ -219,9 +220,9 @@ WantedBy=multi-user.target
 ```
 
 ```ini
-# /etc/systemd/system/dynip.timer
+# /etc/systemd/system/alasia.timer
 [Unit]
-Description=Run dynip every 5 minutes
+Description=Run alasia every 5 minutes
 
 [Timer]
 OnBootSec=5min
@@ -241,7 +242,7 @@ WantedBy=timers.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now dynip.timer
+sudo systemctl enable --now alasia.timer
 ```
 
 ---
@@ -252,20 +253,20 @@ sudo systemctl enable --now dynip.timer
 
 ```bash
 #!/bin/bash
-# /etc/dynip/run-dynip.sh
+# /etc/alasia/run-alasia.sh
 
 # 配置环境变量
 export CLOUDFLARE_API_TOKEN="your_token_here"
 export ALIYUN_ACCESS_KEY_ID="your_access_key_id"
 export ALIYUN_ACCESS_KEY_SECRET="your_access_key_secret"
 
-# 执行 dynip
-/usr/local/bin/dynip run -f /etc/dynip/config.json
+# 执行 alasia
+/usr/local/bin/alasia run -f /etc/alasia/config.json
 ```
 
 设置权限：
 ```bash
-sudo chmod +x /etc/dynip/run-dynip.sh
+sudo chmod +x /etc/alasia/run-alasia.sh
 ```
 
 #### 2. 配置 crontab
@@ -277,7 +278,7 @@ sudo crontab -e
 添加以下内容（每 5 分钟执行一次）：
 
 ```cron
-*/5 * * * * /etc/dynip/run-dynip.sh >> /var/log/dynip.log 2>&1
+*/5 * * * * /etc/alasia/run-alasia.sh >> /var/log/alasia.log 2>&1
 ```
 
 > **提示**：根据实际需求调整执行频率。
@@ -285,7 +286,7 @@ sudo crontab -e
 ## 目录结构
 
 ```
-dynip/
+alasia/
 ├── CMakeLists.txt
 ├── build.sh
 ├── config.example.json
