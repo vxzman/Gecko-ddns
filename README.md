@@ -159,7 +159,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/alasia run -f /etc/alasia/config.json
+ExecStart=/usr/local/bin/alasia run -c /etc/alasia/config.json -d /etc/alasia
 WorkingDirectory=/etc/alasia
 
 [Install]
@@ -204,7 +204,7 @@ crontab -e
 
 ```bash
 # 每 10 分钟执行一次
-*/10 * * * * /usr/local/bin/alasia run -f /etc/alasia/config.json
+*/10 * * * * /usr/local/bin/alasia run -c /etc/alasia/config.json -d /etc/alasia
 ```
 
 ---
@@ -224,8 +224,10 @@ crontab -e
     <array>
         <string>/usr/local/bin/alasia</string>
         <string>run</string>
-        <string>-f</string>
+        <string>-c</string>
         <string>/etc/alasia/config.json</string>
+        <string>-d</string>
+        <string>/etc/alasia</string>
     </array>
     <key>StartInterval</key>
     <integer>600</integer>
@@ -327,8 +329,7 @@ sudo launchctl load /Library/LaunchDaemons/com.alasia.plist
 |------|------|------|------|
 | `get_ip.interface` | `string` | 条件 | 网卡名称（与 `urls` 二选一） |
 | `get_ip.urls` | `[]string` | 条件 | IP 获取 API URLs（与 `interface` 二选一） |
-| `work_dir` | `string` | 否 | 工作目录（存放缓存文件） |
-| `log_output` | `string` | 否 | 日志输出路径，`shell` 表示标准输出 |
+| `log_output` | `string` | 否 | 日志输出路径，`shell` 表示标准输出（相对路径相对于 `--dir` 或配置文件目录） |
 | `proxy` | `string` | 否 | 全局代理 URL（`socks5://` 或 `http://`） |
 
 #### records 字段（每条记录）
@@ -396,9 +397,18 @@ alasia <command> [options]
 
 | 参数 | 简写 | 类型 | 默认值 | 描述 |
 |------|------|------|--------|------|
-| `--config` | `-f` | `string` | 无 | 配置文件路径（JSON 格式） |
+| `--config` | `-c` | `string` | 无 | 配置文件路径（JSON 格式） |
+| `--dir` | `-d` | `string` | 无 | 工作目录（存放缓存、相对日志路径） |
 | `--ignore-cache` | `-i` | `bool` | `false` | 忽略缓存 IP，强制更新 |
 | `--timeout` | `-t` | `int` | `300` | 超时时间（秒） |
+
+### 参数组合
+
+| 用法 | 说明 |
+|------|------|
+| `-c config.json` | 使用指定配置，工作目录为配置文件所在目录 |
+| `-d /etc/alasia` | 在指定目录查找 `config.json` |
+| `-c config.json -d /var/lib/alasia` | 使用指定配置，工作目录为 `/var/lib/alasia` |
 
 ### `version` 命令
 

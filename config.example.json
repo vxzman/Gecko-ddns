@@ -14,7 +14,6 @@
                 "https://v6.ipv6-test.com/api/myip.php"
             ]
         },
-        "work_dir": "/opt/alasia",
         "log_output": "shell",
         "proxy": ""
     },

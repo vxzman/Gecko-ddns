@@ -173,7 +173,6 @@ std::optional<Config> read_config(const std::string& path) {
     if (root.contains("general")) {
         const auto& g = root["general"];
         cfg.general.log_output = jstr(g, "log_output", std::string(config::DEFAULT_LOG_OUTPUT));
-        cfg.general.work_dir   = jstr(g, "work_dir");
         cfg.general.proxy      = jstr(g, "proxy");
 
         if (g.contains("get_ip")) {
@@ -244,11 +243,10 @@ bool write_config(const std::string& path, const Config& cfg) {
     }
     
     // general
-    root["general"]["log_output"]       = cfg.general.log_output;
-    root["general"]["work_dir"]         = cfg.general.work_dir;
-    root["general"]["proxy"]            = cfg.general.proxy;
+    root["general"]["log_output"] = cfg.general.log_output;
+    root["general"]["proxy"]      = cfg.general.proxy;
     root["general"]["get_ip"]["interface"] = cfg.general.get_ip.interface_name;
-    root["general"]["get_ip"]["urls"]   = cfg.general.get_ip.urls;
+    root["general"]["get_ip"]["urls"]      = cfg.general.get_ip.urls;
 
     // records
     root["records"] = json::array();
@@ -284,14 +282,14 @@ bool write_config(const std::string& path, const Config& cfg) {
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 
 std::string get_cache_file_path(const std::string& config_abs_path,
-                                 const std::string& work_dir) {
-    if (!work_dir.empty()) {
+                                 const std::string& base_dir) {
+    if (!base_dir.empty()) {
         std::error_code ec;
-        fs::create_directories(work_dir, ec);
+        fs::create_directories(base_dir, ec);
         if (!ec) {
-            return (fs::path(work_dir) / config::CACHE_FILENAME).string();
+            return (fs::path(base_dir) / config::CACHE_FILENAME).string();
         }
-        logger::error("Failed to create work_dir '{}': {}", work_dir, ec.message());
+        logger::error("Failed to create base_dir '{}': {}", base_dir, ec.message());
     }
     return (fs::path(config_abs_path).parent_path() / config::CACHE_FILENAME).string();
 }

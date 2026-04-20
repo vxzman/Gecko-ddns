@@ -23,8 +23,7 @@ struct IPSource {
 
 struct GeneralConfig {
     IPSource    get_ip;
-    std::string work_dir;
-    std::string log_output;  ///< "shell" or file path
+    std::string log_output;  ///< "shell" or file path (relative to base_dir if not absolute)
     std::string proxy;       ///< global proxy (optional)
 };
 
