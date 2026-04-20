@@ -15,65 +15,6 @@ using json   = nlohmann::json;
 
 namespace config {
 
-// ─── Environment variable expansion ──────────────────────────────────────────
-
-/// Expand a single environment variable reference with optional default value
-/// Supports: ${VAR}, ${VAR:-default}, ${VAR-default}
-static std::string expand_env_var(const std::string& expr) {
-    // expr is the content inside ${...}
-    std::string key       = expr;
-    std::string default_val;
-    bool        has_default = false;
-
-    // Check for :- syntax (use default if unset or empty)
-    if (auto pos = key.find(":-"); pos != std::string::npos) {
-        key = key.substr(0, pos);
-        if (pos + 2 <= expr.size()) {
-            default_val = expr.substr(pos + 2);
-        }
-        has_default = true;
-    }
-    // Check for - syntax (use default if unset)
-    else if (auto pos = key.find('-'); pos != std::string::npos) {
-        key = key.substr(0, pos);
-        if (pos + 1 <= expr.size()) {
-            default_val = expr.substr(pos + 1);
-        }
-        has_default = true;
-    }
-
-    const char* env_val = std::getenv(key.c_str());
-    if (env_val == nullptr || (has_default && std::string(env_val).empty())) {
-        return has_default ? default_val : "";
-    }
-    return env_val;
-}
-
-/// Expand all environment variables in a string
-/// Looks for ${...} patterns and replaces them with environment values
-static std::string expand_env(const std::string& input) {
-    std::string result;
-    result.reserve(input.size());
-
-    std::size_t i = 0;
-    while (i < input.size()) {
-        // Look for ${
-        if (i + 1 < input.size() && input[i] == '$' && input[i + 1] == '{') {
-            // Find closing }
-            std::size_t end = input.find('}', i + 2);
-            if (end != std::string::npos) {
-                std::string expr = input.substr(i + 2, end - i - 2);
-                result += expand_env_var(expr);
-                i = end + 1;
-                continue;
-            }
-        }
-        result += input[i];
-        ++i;
-    }
-    return result;
-}
-
 // ─── JSON helpers ─────────────────────────────────────────────────────────────
 
 static std::string jstr(const json& j, const char* key, const std::string& def = "") {
@@ -91,29 +32,29 @@ static int jint(const json& j, const char* key, int def = 0) {
     return def;
 }
 
+// ─── Environment variable resolution ──────────────────────────────────────────
+
+/// Resolve $name reference from cfg.environment
+/// Only supports $name syntax (e.g., $cloudflare_token)
+/// Returns empty string if variable not found
+static std::string resolve_env_var(const std::string& expr, const std::map<std::string, std::string>& environment) {
+    if (expr.empty() || expr[0] != '$') {
+        return expr;
+    }
+    
+    std::string name = expr.substr(1);
+    if (name.empty()) {
+        return expr;
+    }
+    
+    auto it = environment.find(name);
+    if (it != environment.end()) {
+        return it->second;
+    }
+    return "";
+}
+
 // ─── Validation helpers ───────────────────────────────────────────────────────
-
-/// Check if a string looks like an environment variable reference ${...}
-static bool is_env_var_reference(const std::string& s) {
-    if (s.size() < 4) return false;  // Minimum: ${X}
-    if (s[0] != '$' || s[1] != '{') return false;
-    if (s.back() != '}') return false;
-    return true;
-}
-
-/// Validate that sensitive values are not stored in plaintext
-static bool validate_no_plaintext_secret(const std::string& value, const std::string& field_name) {
-    if (value.empty()) {
-        logger::error("Config: {} is empty", field_name);
-        return false;
-    }
-    if (!is_env_var_reference(value)) {
-        logger::error("Config: {} must use environment variable reference (e.g., ${{VAR_NAME}}), "
-                      "plaintext secrets are not allowed for security reasons", field_name);
-        return false;
-    }
-    return true;
-}
 
 static bool validate_proxy_url(const std::string& proxy) {
     if (proxy.empty()) return true;
@@ -168,14 +109,8 @@ static bool validate_config(const Config& cfg) {
                 logger::error("Config: record[{}]: cloudflare configuration is missing", i);
                 return false;
             }
-            // Validate raw value (before env expansion) for security
-            if (!validate_no_plaintext_secret(r._raw_cloudflare_api_token, 
-                    "record[" + std::to_string(i) + "].cloudflare.api_token")) {
-                return false;
-            }
-            // Check if expanded value is empty (env var not set)
             if (r.cloudflare->api_token.empty()) {
-                logger::error("Config: record[{}]: cloudflare.api_token environment variable is not set or empty", i);
+                logger::error("Config: record[{}]: cloudflare.api_token is not set or empty", i);
                 return false;
             }
         } else if (r.provider == "aliyun") {
@@ -183,22 +118,12 @@ static bool validate_config(const Config& cfg) {
                 logger::error("Config: record[{}]: aliyun configuration is missing", i);
                 return false;
             }
-            // Validate raw values (before env expansion) for security
-            if (!validate_no_plaintext_secret(r._raw_aliyun_access_key_id, 
-                    "record[" + std::to_string(i) + "].aliyun.access_key_id")) {
-                return false;
-            }
-            if (!validate_no_plaintext_secret(r._raw_aliyun_access_key_secret, 
-                    "record[" + std::to_string(i) + "].aliyun.access_key_secret")) {
-                return false;
-            }
-            // Check if expanded values are empty (env vars not set)
             if (r.aliyun->access_key_id.empty()) {
-                logger::error("Config: record[{}]: aliyun.access_key_id environment variable is not set or empty", i);
+                logger::error("Config: record[{}]: aliyun.access_key_id is not set or empty", i);
                 return false;
             }
             if (r.aliyun->access_key_secret.empty()) {
-                logger::error("Config: record[{}]: aliyun.access_key_secret environment variable is not set or empty", i);
+                logger::error("Config: record[{}]: aliyun.access_key_secret is not set or empty", i);
                 return false;
             }
         } else {
@@ -229,33 +154,27 @@ std::optional<Config> read_config(const std::string& path) {
     try {
         f >> root;
     } catch (const json::parse_error& e) {
-        logger::error("配置文件 JSON 格式错误:");
-        logger::error("  JSON 解析失败: {}", e.what());
-        logger::error("  错误位置: byte offset {}", e.byte);
-        logger::error("");
-        logger::error("常见错误原因:");
-        logger::error("  1. 缺少逗号 (,) - 在对象或数组的元素之间需要逗号分隔");
-        logger::error("  2. 多余逗号 - 最后一个元素后不应有逗号");
-        logger::error("  3. 引号问题 - 键和字符串值必须使用双引号 \"\"，不能使用单引号");
-        logger::error("  4. 括号不匹配 - 检查 {{}} 和 [] 是否正确配对");
-        logger::error("  5. 使用了注释 - JSON 标准不支持注释");
-        logger::error("  6. 特殊字符未转义 - 如字符串中的引号需要转义");
-        logger::error("");
-        logger::error("推荐验证工具:");
-        logger::error("  - 在线工具: https://jsonlint.com/");
-        logger::error("  - 命令行: python -m json.tool config.json");
-        logger::error("  - 命令行: cat config.json | jq .");
+        logger::error("配置文件 JSON 格式错误：{}", e.what());
         return std::nullopt;
     }
 
     Config cfg;
+
+    // environment
+    if (root.contains("environment") && root["environment"].is_object()) {
+        for (const auto& [key, value] : root["environment"].items()) {
+            if (value.is_string()) {
+                cfg.environment[key] = value.get<std::string>();
+            }
+        }
+    }
 
     // general
     if (root.contains("general")) {
         const auto& g = root["general"];
         cfg.general.log_output = jstr(g, "log_output", std::string(config::DEFAULT_LOG_OUTPUT));
         cfg.general.work_dir   = jstr(g, "work_dir");
-        cfg.general.proxy      = expand_env(jstr(g, "proxy"));
+        cfg.general.proxy      = jstr(g, "proxy");
 
         if (g.contains("get_ip")) {
             const auto& gi = g["get_ip"];
@@ -282,44 +201,30 @@ std::optional<Config> read_config(const std::string& path) {
             if (rj.contains("cloudflare") && rj["cloudflare"].is_object()) {
                 const auto& cj = rj["cloudflare"];
                 CloudflareRecord cr;
-                // Store raw value for security validation
-                std::string raw_api_token = jstr(cj, "api_token");
-                std::string raw_zone_id   = jstr(cj, "zone_id");
-                // Expand environment variables
-                cr.api_token = expand_env(raw_api_token);
-                cr.zone_id   = expand_env(raw_zone_id);
+                std::string api_token = jstr(cj, "api_token");
+                std::string zone_id   = jstr(cj, "zone_id");
+                // Resolve $name references
+                cr.api_token = resolve_env_var(api_token, cfg.environment);
+                cr.zone_id   = resolve_env_var(zone_id, cfg.environment);
                 cr.proxied   = jbool(cj, "proxied");
                 cr.ttl       = jint(cj, "ttl");
-                // Store raw values for validation (use zone_id field temporarily)
-                // We'll validate before expansion in validate_config
-                r._raw_cloudflare_api_token = raw_api_token;
-                r._raw_cloudflare_zone_id   = raw_zone_id;
                 r.cloudflare = cr;
             }
 
             if (rj.contains("aliyun") && rj["aliyun"].is_object()) {
                 const auto& aj = rj["aliyun"];
                 AliyunRecord ar;
-                // Store raw values for security validation
-                std::string raw_access_key_id     = jstr(aj, "access_key_id");
-                std::string raw_access_key_secret = jstr(aj, "access_key_secret");
-                // Expand environment variables
-                ar.access_key_id     = expand_env(raw_access_key_id);
-                ar.access_key_secret = expand_env(raw_access_key_secret);
+                std::string access_key_id     = jstr(aj, "access_key_id");
+                std::string access_key_secret = jstr(aj, "access_key_secret");
+                // Resolve $name references
+                ar.access_key_id     = resolve_env_var(access_key_id, cfg.environment);
+                ar.access_key_secret = resolve_env_var(access_key_secret, cfg.environment);
                 ar.ttl               = jint(aj, "ttl");
-                // Store raw values for validation
-                r._raw_aliyun_access_key_id     = raw_access_key_id;
-                r._raw_aliyun_access_key_secret = raw_access_key_secret;
                 r.aliyun = ar;
             }
 
             cfg.records.push_back(std::move(r));
         }
-    }
-
-    // Expand environment variables in proxy
-    if (!cfg.general.proxy.empty()) {
-        cfg.general.proxy = expand_env(cfg.general.proxy);
     }
 
     if (!validate_config(cfg)) return std::nullopt;
@@ -331,12 +236,21 @@ std::optional<Config> read_config(const std::string& path) {
 
 bool write_config(const std::string& path, const Config& cfg) {
     json root;
+    
+    // environment
+    root["environment"] = json::object();
+    for (const auto& [key, value] : cfg.environment) {
+        root["environment"][key] = value;
+    }
+    
+    // general
     root["general"]["log_output"]       = cfg.general.log_output;
     root["general"]["work_dir"]         = cfg.general.work_dir;
     root["general"]["proxy"]            = cfg.general.proxy;
     root["general"]["get_ip"]["interface"] = cfg.general.get_ip.interface_name;
     root["general"]["get_ip"]["urls"]   = cfg.general.get_ip.urls;
 
+    // records
     root["records"] = json::array();
     for (const auto& r : cfg.records) {
         json rj;
@@ -348,25 +262,14 @@ bool write_config(const std::string& path, const Config& cfg) {
         rj["use_proxy"] = r.use_proxy;
 
         if (r.cloudflare) {
-            // Use raw values to avoid writing plaintext secrets
-            // Only write environment variable references (e.g., ${VAR})
-            rj["cloudflare"]["api_token"] = r._raw_cloudflare_api_token.empty() 
-                ? r.cloudflare->api_token 
-                : r._raw_cloudflare_api_token;
-            rj["cloudflare"]["zone_id"]   = r._raw_cloudflare_zone_id.empty()
-                ? r.cloudflare->zone_id
-                : r._raw_cloudflare_zone_id;
+            rj["cloudflare"]["api_token"] = r.cloudflare->api_token;
+            rj["cloudflare"]["zone_id"]   = r.cloudflare->zone_id;
             rj["cloudflare"]["proxied"]   = r.cloudflare->proxied;
             rj["cloudflare"]["ttl"]       = r.cloudflare->ttl;
         }
         if (r.aliyun) {
-            // Use raw values to avoid writing plaintext secrets
-            rj["aliyun"]["access_key_id"]     = r._raw_aliyun_access_key_id.empty()
-                ? r.aliyun->access_key_id
-                : r._raw_aliyun_access_key_id;
-            rj["aliyun"]["access_key_secret"] = r._raw_aliyun_access_key_secret.empty()
-                ? r.aliyun->access_key_secret
-                : r._raw_aliyun_access_key_secret;
+            rj["aliyun"]["access_key_id"]     = r.aliyun->access_key_id;
+            rj["aliyun"]["access_key_secret"] = r.aliyun->access_key_secret;
             rj["aliyun"]["ttl"]               = r.aliyun->ttl;
         }
         root["records"].push_back(std::move(rj));
@@ -398,7 +301,6 @@ std::string read_last_ip(const std::string& path) {
     if (!f.is_open()) return "";
     std::string ip;
     std::getline(f, ip);
-    // trim whitespace
     auto trim = [](std::string& s) {
         while (!s.empty() && std::isspace((unsigned char)s.back()))  s.pop_back();
         while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(s.begin());
@@ -449,7 +351,7 @@ std::map<std::string, std::string> read_zone_id_cache(const std::string& path) {
             }
         }
     } catch (const json::parse_error&) {
-        // Ignore parse errors, return empty map
+        return zone_ids;
     }
     return zone_ids;
 }
@@ -457,7 +359,6 @@ std::map<std::string, std::string> read_zone_id_cache(const std::string& path) {
 bool update_zone_id_cache(const std::string& path, const std::string& zone, const std::string& zone_id) {
     std::map<std::string, std::string> zone_ids;
 
-    // Read existing cache
     std::ifstream f_in(path);
     if (f_in.is_open()) {
         try {
@@ -471,14 +372,11 @@ bool update_zone_id_cache(const std::string& path, const std::string& zone, cons
                 }
             }
         } catch (const json::parse_error&) {
-            // Ignore parse errors, start fresh
         }
     }
 
-    // Update
     zone_ids[zone] = zone_id;
 
-    // Write back
     json j = json::object();
     for (const auto& [z, id] : zone_ids) {
         j[z] = id;
@@ -489,8 +387,7 @@ bool update_zone_id_cache(const std::string& path, const std::string& zone, cons
     f_out << j.dump(4) << "\n";
     if (!f_out.good()) return false;
     f_out.close();
-    
-    // Set file permissions to 0600 (owner read/write only)
+
     if (chmod(path.c_str(), S_IRUSR | S_IWUSR) != 0) {
         return false;
     }

@@ -59,8 +59,9 @@ struct RecordConfig {
 };
 
 struct Config {
-    GeneralConfig           general;
-    std::vector<RecordConfig> records;
+    std::map<std::string, std::string> environment;  ///< Environment variables
+    GeneralConfig                      general;
+    std::vector<RecordConfig>          records;
 };
 
 /// Read and validate config JSON. Returns nullopt on any error.
