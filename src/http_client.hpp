@@ -4,6 +4,7 @@
 #include <expected>
 #include <string>
 #include <map>
+#include <mutex>
 
 struct HttpResponse {
     int status_code;
@@ -44,6 +45,7 @@ private:
         int max_retries);
     
     static size_t write_callback(void* contents, size_t size, size_t nmemb, std::string* userp);
-    
+
+    static inline std::mutex proxy_mutex_;
     static inline std::string proxy_url_;
 };

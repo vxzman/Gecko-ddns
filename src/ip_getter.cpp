@@ -1,7 +1,24 @@
 #include "ip_getter.hpp"
 #include "config.hpp"
 #include "curl_pool.hpp"
+#include "http_client.hpp"
 #include "log.hpp"
+
+// RAII wrapper for socket file descriptor
+class SocketGuard {
+    int fd_;
+public:
+    explicit SocketGuard(int fd) : fd_(fd) {}
+    ~SocketGuard() { if (fd_ >= 0) close(fd_); }
+    int get() const { return fd_; }
+    SocketGuard(const SocketGuard&) = delete;
+    SocketGuard& operator=(const SocketGuard&) = delete;
+    SocketGuard(SocketGuard&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
+    SocketGuard& operator=(SocketGuard&& other) noexcept {
+        if (this != &other) { fd_ = other.fd_; other.fd_ = -1; }
+        return *this;
+    }
+};
 
 // Linux netlink headers (only on Linux)
 #if defined(__linux__)
@@ -97,9 +114,9 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
         return std::unexpected(std::string("Interface not found: ") + std::string(iface_name));
     }
 
-    // Open netlink socket
-    int sock = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
-    if (sock < 0) {
+    // Open netlink socket with RAII
+    SocketGuard sock(socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE));
+    if (sock.get() < 0) {
         return std::unexpected(std::string("socket() failed: ") + strerror(errno));
     }
 
@@ -114,10 +131,8 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
     req.nlh.nlmsg_seq   = 1;
     req.ifa.ifa_family  = AF_INET6;
 
-    if (send(sock, &req, req.nlh.nlmsg_len, 0) < 0) {
-        std::string err = std::string("send() failed: ") + strerror(errno);
-        close(sock);
-        return std::unexpected(err);
+    if (send(sock.get(), &req, req.nlh.nlmsg_len, 0) < 0) {
+        return std::unexpected(std::string("send() failed: ") + strerror(errno));
     }
 
     // Read response
@@ -125,17 +140,15 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
     char buf[8192];
 
     while (true) {
-        ssize_t len = recv(sock, buf, sizeof(buf), 0);
+        ssize_t len = recv(sock.get(), buf, sizeof(buf), 0);
         if (len < 0) {
-            std::string err = std::string("recv() failed: ") + strerror(errno);
-            close(sock);
-            return std::unexpected(err);
+            return std::unexpected(std::string("recv() failed: ") + strerror(errno));
         }
 
         const nlmsghdr* nlh = reinterpret_cast<const nlmsghdr*>(buf);
         for (; NLMSG_OK(nlh, (unsigned)len); nlh = NLMSG_NEXT(nlh, len)) {
-            if (nlh->nlmsg_type == NLMSG_DONE)  { goto done; }
-            if (nlh->nlmsg_type == NLMSG_ERROR) { close(sock); return std::unexpected("netlink error"); }
+            if (nlh->nlmsg_type == NLMSG_DONE)  { break; }
+            if (nlh->nlmsg_type == NLMSG_ERROR) { return std::unexpected("netlink error"); }
             if (nlh->nlmsg_type != RTM_NEWADDR)  continue;
 
             const ifaddrmsg* ifa = reinterpret_cast<const ifaddrmsg*>(NLMSG_DATA(nlh));
@@ -175,8 +188,7 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
             if (info.is_candidate) result.push_back(info);
         }
     }
-done:
-    close(sock);
+
     if (result.empty()) return std::unexpected("No suitable IPv6 address on interface " + std::string(iface_name));
     return result;
 }
@@ -187,81 +199,35 @@ done:
 
 namespace {
 
-static size_t curl_write_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
-    auto* buf = reinterpret_cast<std::string*>(userdata);
-    buf->append(ptr, size * nmemb);
-    return size * nmemb;
-}
-
-static std::string trim(const std::string& s) {
-    auto is_space = [](unsigned char c) { return std::isspace(c); };
-    auto trimmed = s | std::views::drop_while(is_space) | std::views::reverse | std::views::drop_while(is_space) | std::views::reverse;
-    return std::string(trimmed.begin(), trimmed.end());
-}
-
 static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
-    constexpr int MAX_RETRIES = 2;
-
-    for (int attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
-        // Acquire CURL handle from connection pool
-        auto curl_handle = curl_pool::ConnectionPool::instance().acquire();
-        CURL* curl = curl_handle.get();
-        if (!curl) { err = "curl_easy_init failed"; return ""; }
-
-        std::string body;
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, config::HTTP_TIMEOUT_SECONDS);
-        curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V6); // force IPv6
-
-        CURLcode res = curl_easy_perform(curl);
-        long http_code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-        // Handle is automatically returned to pool via RAII
-
-        if (res != CURLE_OK) {
-            err = curl_easy_strerror(res);
-            if (attempt < MAX_RETRIES) {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                continue;
-            }
-            return "";
-        }
-
-        if (http_code != 200) {
-            err = "HTTP " + std::to_string(http_code);
-            if (attempt < MAX_RETRIES) {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                continue;
-            }
-            return "";
-        }
-
-        // Take first line and trim
-        std::string line = trim(body.substr(0, body.find('\n')));
-        if (line.empty()) {
-            err = "Empty response";
-            if (attempt < MAX_RETRIES) {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                continue;
-            }
-            return "";
-        }
-
-        // Validate as IPv6
-        uint8_t addr[16];
-        if (inet_pton(AF_INET6, line.c_str(), addr) != 1) {
-            err = "Not a valid IPv6: " + line;
-            return "";
-        }
-        if (is_link_local(addr) || is_loopback(addr) || is_ula(addr)) {
-            err = "Private/local address not suitable: " + line;
-            return "";
-        }
-        return line;
+    // Use HttpClient for consistent behavior
+    auto result = HttpClient::get(url, {}, config::HTTP_TIMEOUT_SECONDS, config::HTTP_MAX_RETRIES);
+    if (!result) {
+        err = result.error();
+        return "";
     }
-    return "";
+    
+    // Parse response - extract first line and trim
+    std::string body = result->body;
+    auto newline_pos = body.find('\n');
+    if (newline_pos != std::string::npos) {
+        body = body.substr(0, newline_pos);
+    }
+    
+    // Trim whitespace
+    auto is_space = [](unsigned char c) { return std::isspace(c); };
+    auto trimmed = body | std::views::drop_while(is_space) 
+                         | std::views::reverse 
+                         | std::views::drop_while(is_space) 
+                         | std::views::reverse;
+    std::string ip(trimmed.begin(), trimmed.end());
+    
+    if (ip.empty()) {
+        err = "Empty response from API";
+        return "";
+    }
+    
+    return ip;
 }
 
 } // anonymous namespace

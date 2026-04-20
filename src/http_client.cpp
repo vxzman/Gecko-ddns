@@ -121,9 +121,11 @@ std::expected<HttpResponse, std::string> HttpClient::post(
 }
 
 void HttpClient::set_proxy(const std::string& proxy_url) {
+    std::lock_guard<std::mutex> lock(proxy_mutex_);
     proxy_url_ = proxy_url;
 }
 
 void HttpClient::clear_proxy() {
+    std::lock_guard<std::mutex> lock(proxy_mutex_);
     proxy_url_.clear();
 }
