@@ -60,11 +60,83 @@ static bool validate_proxy_url(const std::string& proxy) {
     if (proxy.empty()) return true;
     std::string lower = proxy;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    if (lower.rfind("http://", 0) == 0) return true;
-    if (lower.rfind("https://", 0) == 0) return true;
-    if (lower.rfind("socks5://", 0) == 0) return true;
-    if (lower.rfind("socks5h://", 0) == 0) return true;
-    return false;
+    return lower.rfind("http://", 0) == 0 ||
+           lower.rfind("https://", 0) == 0 ||
+           lower.rfind("socks5://", 0) == 0 ||
+           lower.rfind("socks5h://", 0) == 0;
+}
+
+static bool validate_general_config(const GeneralConfig& general) {
+    bool has_iface = !general.get_ip.interface_name.empty();
+    bool has_urls  = !general.get_ip.urls.empty();
+    
+    if (!has_iface && !has_urls) {
+        logger::error("Config: either 'get_ip.interface' or 'get_ip.urls' must be set");
+        return false;
+    }
+
+    if (!general.proxy.empty() && !validate_proxy_url(general.proxy)) {
+        logger::error("Config: invalid global proxy format '{}'", general.proxy);
+        return false;
+    }
+
+    return true;
+}
+
+static bool validate_record(const RecordConfig& r, size_t index, const std::string& global_proxy) {
+    if (r.provider.empty()) {
+        logger::error("Config: record[{}]: provider is required", index);
+        return false;
+    }
+    if (r.zone.empty()) {
+        logger::error("Config: record[{}]: zone is required", index);
+        return false;
+    }
+    if (r.record.empty()) {
+        logger::error("Config: record[{}]: record name is required", index);
+        return false;
+    }
+    if (r.use_proxy && global_proxy.empty()) {
+        logger::error("Config: record[{}]: use_proxy=true but no global proxy set", index);
+        return false;
+    }
+
+    if (r.provider == "cloudflare") {
+        if (!r.cloudflare) {
+            logger::error("Config: record[{}]: cloudflare configuration is missing", index);
+            return false;
+        }
+        if (r.cloudflare->api_token.empty()) {
+            logger::error("Config: record[{}]: cloudflare.api_token is not set or empty", index);
+            return false;
+        }
+    } else if (r.provider == "aliyun") {
+        if (!r.aliyun) {
+            logger::error("Config: record[{}]: aliyun configuration is missing", index);
+            return false;
+        }
+        if (r.aliyun->access_key_id.empty()) {
+            logger::error("Config: record[{}]: aliyun.access_key_id is not set or empty", index);
+            return false;
+        }
+        if (r.aliyun->access_key_secret.empty()) {
+            logger::error("Config: record[{}]: aliyun.access_key_secret is not set or empty", index);
+            return false;
+        }
+    } else {
+        logger::error("Config: record[{}]: unsupported provider '{}'", index, r.provider);
+        return false;
+    }
+    return true;
+}
+
+static bool validate_all_records(const std::vector<RecordConfig>& records, const std::string& global_proxy) {
+    for (size_t i = 0; i < records.size(); ++i) {
+        if (!validate_record(records[i], i, global_proxy)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool validate_config(const Config& cfg) {
@@ -73,65 +145,8 @@ static bool validate_config(const Config& cfg) {
         return false;
     }
 
-    bool has_iface = !cfg.general.get_ip.interface_name.empty();
-    bool has_urls  = !cfg.general.get_ip.urls.empty();
-    if (!has_iface && !has_urls) {
-        logger::error("Config: either 'get_ip.interface' or 'get_ip.urls' must be set");
-        return false;
-    }
-
-    if (!cfg.general.proxy.empty() && !validate_proxy_url(cfg.general.proxy)) {
-        logger::error("Config: invalid global proxy format '{}'", cfg.general.proxy);
-        return false;
-    }
-
-    for (size_t i = 0; i < cfg.records.size(); ++i) {
-        const auto& r = cfg.records[i];
-        if (r.provider.empty()) {
-            logger::error("Config: record[{}]: provider is required", i);
-            return false;
-        }
-        if (r.zone.empty()) {
-            logger::error("Config: record[{}]: zone is required", i);
-            return false;
-        }
-        if (r.record.empty()) {
-            logger::error("Config: record[{}]: record name is required", i);
-            return false;
-        }
-        if (r.use_proxy && cfg.general.proxy.empty()) {
-            logger::error("Config: record[{}]: use_proxy=true but no global proxy set", i);
-            return false;
-        }
-
-        if (r.provider == "cloudflare") {
-            if (!r.cloudflare) {
-                logger::error("Config: record[{}]: cloudflare configuration is missing", i);
-                return false;
-            }
-            if (r.cloudflare->api_token.empty()) {
-                logger::error("Config: record[{}]: cloudflare.api_token is not set or empty", i);
-                return false;
-            }
-        } else if (r.provider == "aliyun") {
-            if (!r.aliyun) {
-                logger::error("Config: record[{}]: aliyun configuration is missing", i);
-                return false;
-            }
-            if (r.aliyun->access_key_id.empty()) {
-                logger::error("Config: record[{}]: aliyun.access_key_id is not set or empty", i);
-                return false;
-            }
-            if (r.aliyun->access_key_secret.empty()) {
-                logger::error("Config: record[{}]: aliyun.access_key_secret is not set or empty", i);
-                return false;
-            }
-        } else {
-            logger::error("Config: record[{}]: unsupported provider '{}'", i, r.provider);
-            return false;
-        }
-    }
-    return true;
+    return validate_general_config(cfg.general) &&
+           validate_all_records(cfg.records, cfg.general.proxy);
 }
 
 // ─── Parse ────────────────────────────────────────────────────────────────────

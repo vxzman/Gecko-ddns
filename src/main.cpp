@@ -49,6 +49,111 @@ struct UpdateResult {
     std::string error;
 };
 
+// ─── Cloudflare Record Update ──────────────────────────────────────────────────
+
+static UpdateResult update_cloudflare_record(
+    const config::Config&       cfg,
+    const config::RecordConfig& rec,
+    const std::string&          current_ip,
+    const std::string&          zone_id_cache_file) {
+    
+    UpdateResult result;
+    result.record_name = rec.record + "." + rec.zone;
+
+    logger::info("Processing record: {} ({})", result.record_name, rec.provider);
+
+    if (!rec.cloudflare) {
+        result.error = "missing cloudflare config";
+        logger::error("Record {}: {}", result.record_name, result.error);
+        return result;
+    }
+
+    std::string proxy_url = config::get_record_proxy(cfg, rec);
+    auto provider = provider::CloudflareProvider(rec.cloudflare->api_token, proxy_url);
+    std::string zone_id = rec.cloudflare->zone_id;
+
+    int ttl = rec.cloudflare->ttl > 0 ? rec.cloudflare->ttl : config::get_record_ttl(rec);
+    bool proxied = rec.proxied || rec.cloudflare->proxied;
+
+    // Auto-fetch zone_id if not set (try cache first)
+    if (zone_id.empty()) {
+        auto cached = config::read_zone_id_cache(zone_id_cache_file);
+        auto it = cached.find(rec.zone);
+        if (it != cached.end() && !it->second.empty()) {
+            zone_id = it->second;
+            logger::debug("Zone ID loaded from cache for {}: {}", rec.zone, zone_id);
+        }
+    }
+
+    if (zone_id.empty()) {
+        logger::info("Zone ID not configured, fetching for zone: {}", rec.zone);
+        auto z_res = provider.get_zone_id(rec.zone, "");
+        if (!z_res) {
+            result.error = "Failed to get Zone ID: " + z_res.error();
+            logger::error("Record {}: {}", result.record_name, result.error);
+            return result;
+        }
+        zone_id = *z_res;
+        logger::info("Zone ID fetched: {}", zone_id);
+
+        if (!config::update_zone_id_cache(zone_id_cache_file, rec.zone, zone_id)) {
+            logger::warning("Warning: failed to save Zone ID cache");
+        }
+    }
+
+    auto ok = provider.upsert_record_with_zone_id(rec.zone, rec.record, current_ip, zone_id, ttl, proxied);
+    if (!ok) {
+        result.error = "Cloudflare upsert failed: " + ok.error();
+        logger::error("Failed to update {}", result.record_name);
+        return result;
+    }
+
+    logger::success("Record {} updated successfully", result.record_name);
+    result.success = true;
+    return result;
+}
+
+// ─── Aliyun Record Update ──────────────────────────────────────────────────────
+
+static UpdateResult update_aliyun_record(
+    const config::Config&       cfg,
+    const config::RecordConfig& rec,
+    const std::string&          current_ip) {
+    
+    UpdateResult result;
+    result.record_name = rec.record + "." + rec.zone;
+
+    logger::info("Processing record: {} ({})", result.record_name, rec.provider);
+
+    if (!rec.aliyun) {
+        result.error = "missing aliyun config";
+        logger::error("Record {}: {}", result.record_name, result.error);
+        return result;
+    }
+
+    std::string proxy_url = config::get_record_proxy(cfg, rec);
+    if (!proxy_url.empty()) {
+        logger::warning("Aliyun provider does not support proxy, ignoring use_proxy setting");
+    }
+
+    int ttl = rec.aliyun->ttl > 0 ? rec.aliyun->ttl : config::get_record_ttl(rec);
+    auto provider = provider::AliyunProvider(rec.aliyun->access_key_id, rec.aliyun->access_key_secret);
+    std::map<std::string, std::string> extra;
+    
+    auto ok = provider.upsert_record(rec.zone, rec.record, current_ip, ttl, extra);
+    if (!ok) {
+        result.error = "Aliyun upsert failed: " + ok.error();
+        logger::error("Failed to update {}", result.record_name);
+        return result;
+    }
+
+    logger::success("Record {} updated successfully", result.record_name);
+    result.success = true;
+    return result;
+}
+
+// ─── Single Record Update ──────────────────────────────────────────────────────
+
 static UpdateResult update_single_record(
     const config::Config&       cfg,
     const config::RecordConfig& rec,
@@ -64,160 +169,20 @@ static UpdateResult update_single_record(
         return result;
     }
 
-    logger::info("Processing record: {} ({})", result.record_name, rec.provider);
-
-    std::string proxy_url = config::get_record_proxy(cfg, rec);
-    int         ttl       = config::get_record_ttl(rec);
-
     if (rec.provider == "cloudflare") {
-        if (!rec.cloudflare) {
-            result.error = "missing cloudflare config";
-            logger::error("Record {}: {}", result.record_name, result.error);
-            return result;
-        }
-
-        auto provider = provider::CloudflareProvider(rec.cloudflare->api_token, proxy_url);
-        std::string zone_id = rec.cloudflare->zone_id;
-
-        if (rec.cloudflare->ttl > 0) ttl = rec.cloudflare->ttl;
-        bool proxied = rec.proxied || rec.cloudflare->proxied;
-
-        if (zone_id.empty()) {
-            if (timed_out.load() || is_shutdown_requested()) {
-                result.error = "shutdown requested";
-                return result;
-            }
-
-            auto cached = config::read_zone_id_cache(zone_id_cache_file);
-            auto it = cached.find(rec.zone);
-            if (it != cached.end() && !it->second.empty()) {
-                zone_id = it->second;
-                logger::debug("Zone ID loaded from cache for {}: {}", rec.zone, zone_id);
-            }
-        }
-
-        if (zone_id.empty()) {
-            if (timed_out.load() || is_shutdown_requested()) {
-                result.error = "shutdown requested";
-                return result;
-            }
-
-            logger::info("Zone ID not configured, fetching for zone: {}", rec.zone);
-            auto z_res = provider.get_zone_id(rec.zone, "");
-            if (!z_res) {
-                result.error = "Failed to get Zone ID: " + z_res.error();
-                logger::error("Record {}: {}", result.record_name, result.error);
-                return result;
-            }
-            zone_id = *z_res;
-            logger::info("Zone ID fetched: {}", zone_id);
-
-            if (!config::update_zone_id_cache(zone_id_cache_file, rec.zone, zone_id)) {
-                logger::warning("Warning: failed to save Zone ID cache");
-            }
-        }
-
-        if (timed_out.load() || is_shutdown_requested()) {
-            result.error = "shutdown requested";
-            return result;
-        }
-
-        auto ok = provider.upsert_record_with_zone_id(rec.zone, rec.record, current_ip, zone_id, ttl, proxied);
-        if (!ok) {
-            result.error = "Cloudflare upsert failed: " + ok.error();
-            logger::error("Failed to update {}", result.record_name);
-            return result;
-        }
-
+        return update_cloudflare_record(cfg, rec, current_ip, zone_id_cache_file);
     } else if (rec.provider == "aliyun") {
-        if (!rec.aliyun) {
-            result.error = "missing aliyun config";
-            logger::error("Record {}: {}", result.record_name, result.error);
-            return result;
-        }
-
-        if (!proxy_url.empty()) {
-            logger::warning("Aliyun provider does not support proxy, ignoring use_proxy setting");
-        }
-
-        if (rec.aliyun->ttl > 0) ttl = rec.aliyun->ttl;
-
-        if (timed_out.load() || is_shutdown_requested()) {
-            result.error = "shutdown requested";
-            return result;
-        }
-
-        auto provider = provider::AliyunProvider(rec.aliyun->access_key_id, rec.aliyun->access_key_secret);
-        std::map<std::string, std::string> extra;
-        auto ok = provider.upsert_record(rec.zone, rec.record, current_ip, ttl, extra);
-        if (!ok) {
-            result.error = "Aliyun upsert failed: " + ok.error();
-            logger::error("Failed to update {}", result.record_name);
-            return result;
-        }
-
+        return update_aliyun_record(cfg, rec, current_ip);
     } else {
         result.error = "unsupported provider: " + rec.provider;
         logger::error("Record {}: {}", result.record_name, result.error);
         return result;
     }
-
-    logger::success("Record {} updated successfully", result.record_name);
-    result.success = true;
-    return result;
 }
 
-// ─── Run command ──────────────────────────────────────────────────────────────
+// ─── Helper Functions ──────────────────────────────────────────────────────────
 
-static int run_cmd(const std::string& config_path, const std::string& dir_path, 
-                   bool ignore_cache, int timeout_sec) {
-    
-    if (!curl_pool::initialize()) {
-        std::cerr << "Failed to initialize libcurl\n";
-        return 1;
-    }
-
-    std::signal(SIGINT, signal_handler);
-    std::signal(SIGTERM, signal_handler);
-
-    std::error_code ec;
-    auto abs_config = std::filesystem::absolute(config_path, ec);
-    if (ec) {
-        std::cerr << "Failed to resolve config path: " << ec.message() << "\n";
-        curl_pool::cleanup();
-        return 1;
-    }
-
-    auto cfg_opt = config::read_config(abs_config.string());
-    if (!cfg_opt) {
-        std::cerr << "Failed to load configuration\n";
-        curl_pool::cleanup();
-        return 1;
-    }
-    config::Config cfg = std::move(*cfg_opt);
-
-    // Determine base directory for cache, key, and log resolution
-    std::string base_dir = dir_path;
-    if (base_dir.empty()) {
-        base_dir = abs_config.parent_path().string();
-    }
-
-    // Resolve log output path (relative to base_dir if not absolute)
-    std::string log_output = cfg.general.log_output;
-    if (!log_output.empty() && log_output != "shell" && !std::filesystem::path(log_output).is_absolute()) {
-        log_output = (std::filesystem::path(base_dir) / log_output).string();
-        std::filesystem::create_directories(std::filesystem::path(log_output).parent_path(), ec);
-    }
-
-    if (!logger::init(log_output)) {
-        std::cerr << "Failed to initialize logging\n";
-        curl_pool::cleanup();
-        return 1;
-    }
-
-    logger::info("alasia starting with {} record(s)", cfg.records.size());
-
-    // Get current IPv6
+static std::string get_current_ip(const config::Config& cfg) {
     auto infos_res = cfg.general.get_ip.interface_name.empty()
         ? ip_getter::get_from_apis(cfg.general.get_ip.urls)
         : ip_getter::get_from_interface(cfg.general.get_ip.interface_name);
@@ -228,22 +193,17 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
     }
 
     if (!infos_res) {
-        logger::error("Failed to get current IP: {}", infos_res.error());
-        curl_pool::cleanup();
-        return 1;
+        return "";
     }
 
     auto ip_res = ip_getter::select_best(*infos_res);
     if (!ip_res) {
-        logger::error("Failed to select best IPv6: {}", ip_res.error());
-        curl_pool::cleanup();
-        return 1;
+        return "";
     }
-    std::string current_ip = *ip_res;
-    logger::info("Current IPv6 address: {}", current_ip);
+    return *ip_res;
+}
 
-    // Cache
-    std::string cache_file = config::get_cache_file_path(abs_config.string(), base_dir);
+static void check_and_log_cache(const std::string& current_ip, const std::string& cache_file, bool ignore_cache) {
     std::string last_ip = cache::read_last_ip(cache_file);
 
     if (!ignore_cache && !last_ip.empty()) {
@@ -253,9 +213,16 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
             logger::info("IP changed from {} to {}", last_ip, current_ip);
         }
     }
+}
 
-    // Update all records in parallel
-    std::string zone_id_cache_file = config::get_zone_id_cache_path(abs_config.string());
+static void update_records_parallel(
+    const config::Config& cfg,
+    const std::string&    current_ip,
+    const std::string&    zone_id_cache_file,
+    int                   timeout_sec,
+    int&                  success_count,
+    int&                  fail_count) {
+    
     std::vector<UpdateResult> results(cfg.records.size());
     std::vector<std::thread> threads;
     threads.reserve(cfg.records.size());
@@ -284,18 +251,96 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
         }
     }
 
-    // Summarize
-    int success_count = 0, fail_count = 0;
     for (const auto& r : results) {
         if (r.success) ++success_count; else ++fail_count;
     }
-    logger::info("Update completed: {} succeeded, {} failed", success_count, fail_count);
+}
 
-    bool any_success = (success_count > 0);
-    if (any_success && last_ip != current_ip) {
+static void log_summary(int success_count, int fail_count) {
+    logger::info("Update completed: {} succeeded, {} failed", success_count, fail_count);
+}
+
+static void update_cache(const std::string& cache_file, const std::string& current_ip, const std::string& last_ip) {
+    if (last_ip != current_ip) {
         if (!cache::write_last_ip(cache_file, current_ip)) {
             logger::warning("Warning: failed to write cache file");
         }
+    }
+}
+
+// ─── Run command ──────────────────────────────────────────────────────────────
+
+static int run_cmd(const std::string& config_path, const std::string& dir_path,
+                   bool ignore_cache, int timeout_sec) {
+
+    if (!curl_pool::initialize()) {
+        std::cerr << "Failed to initialize libcurl\n";
+        return 1;
+    }
+
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+
+    std::error_code ec;
+    auto abs_config = std::filesystem::absolute(config_path, ec);
+    if (ec) {
+        std::cerr << "Failed to resolve config path: " << ec.message() << "\n";
+        curl_pool::cleanup();
+        return 1;
+    }
+
+    auto cfg_opt = config::read_config(abs_config.string());
+    if (!cfg_opt) {
+        std::cerr << "Failed to load configuration\n";
+        curl_pool::cleanup();
+        return 1;
+    }
+    config::Config cfg = std::move(*cfg_opt);
+
+    // Determine base directory
+    std::string base_dir = dir_path;
+    if (base_dir.empty()) {
+        base_dir = abs_config.parent_path().string();
+    }
+
+    // Resolve log output path
+    std::string log_output = cfg.general.log_output;
+    if (!log_output.empty() && log_output != "shell" && !std::filesystem::path(log_output).is_absolute()) {
+        log_output = (std::filesystem::path(base_dir) / log_output).string();
+        std::filesystem::create_directories(std::filesystem::path(log_output).parent_path(), ec);
+    }
+
+    if (!logger::init(log_output)) {
+        std::cerr << "Failed to initialize logging\n";
+        curl_pool::cleanup();
+        return 1;
+    }
+
+    logger::info("alasia starting with {} record(s)", cfg.records.size());
+
+    // Get current IP
+    std::string current_ip = get_current_ip(cfg);
+    if (current_ip.empty()) {
+        logger::error("Failed to get current IP");
+        curl_pool::cleanup();
+        return 1;
+    }
+    logger::info("Current IPv6 address: {}", current_ip);
+
+    // Cache
+    std::string cache_file = config::get_cache_file_path(abs_config.string(), base_dir);
+    check_and_log_cache(current_ip, cache_file, ignore_cache);
+
+    // Update records
+    std::string zone_id_cache_file = config::get_zone_id_cache_path(abs_config.string());
+    int success_count = 0, fail_count = 0;
+    update_records_parallel(cfg, current_ip, zone_id_cache_file, timeout_sec, success_count, fail_count);
+    log_summary(success_count, fail_count);
+
+    // Update cache
+    std::string last_ip = cache::read_last_ip(cache_file);
+    if (success_count > 0) {
+        update_cache(cache_file, current_ip, last_ip);
     }
 
     curl_pool::cleanup();
