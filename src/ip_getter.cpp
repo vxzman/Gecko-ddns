@@ -1,4 +1,5 @@
 #include "ip_getter.hpp"
+#include "config.hpp"
 #include "curl_pool.hpp"
 #include "log.hpp"
 
@@ -166,8 +167,8 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
 
             IPv6Info info;
             info.ip            = format_ipv6(addr);
-            info.preferred_lft = (preferred_lft == 0xFFFFFFFF) ? (long)1e12 : (long)preferred_lft;
-            info.valid_lft     = (valid_lft     == 0xFFFFFFFF) ? (long)1e12 : (long)valid_lft;
+            info.preferred_lft = (preferred_lft == config::ND6_INFINITE_LIFETIME) ? config::INFINITE_LIFETIME_SECONDS : (long)preferred_lft;
+            info.valid_lft     = (valid_lft     == config::ND6_INFINITE_LIFETIME) ? config::INFINITE_LIFETIME_SECONDS : (long)valid_lft;
             info.is_deprecated = deprecated;
             populate_info(&info);
 
@@ -211,7 +212,7 @@ static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, config::HTTP_TIMEOUT_SECONDS);
         curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V6); // force IPv6
 
         CURLcode res = curl_easy_perform(curl);
@@ -276,8 +277,8 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vecto
             logger::info("API %s succeeded: %s", url.c_str(), ip.c_str());
             IPv6Info info;
             info.ip            = ip;
-            info.preferred_lft = (long)1e12; // treat as permanent
-            info.valid_lft     = (long)1e12;
+            info.preferred_lft = config::INFINITE_LIFETIME_SECONDS; // treat as permanent
+            info.valid_lft     = config::INFINITE_LIFETIME_SECONDS;
             populate_info(&info);
             return std::vector<IPv6Info>{info};
         }

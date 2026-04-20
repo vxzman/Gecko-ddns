@@ -65,6 +65,7 @@ set(SOURCES
     src/cache.cpp
     src/ip_getter.cpp
     src/curl_pool.cpp
+    src/http_client.cpp
     src/provider/cloudflare.cpp
     src/provider/aliyun.cpp
 )

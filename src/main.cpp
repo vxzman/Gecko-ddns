@@ -320,7 +320,7 @@ int main(int argc, char* argv[]) {
         .implicit_value(true);
     run_cmd_parser.add_argument("-t", "--timeout")
         .help("超时时间（秒），默认 300 秒")
-        .default_value(300);
+        .default_value(config::DEFAULT_TIMEOUT_SECONDS);
 
     argparse::ArgumentParser version_cmd("version");
     version_cmd.add_description("显示版本信息");

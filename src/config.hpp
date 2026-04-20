@@ -4,10 +4,11 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <cstdint>
 
 namespace config {
 
-// C++23: constexpr constants for configuration defaults
+// Configuration defaults
 inline constexpr std::string_view DEFAULT_LOG_OUTPUT = "shell";
 inline constexpr std::string_view CACHE_FILENAME = "cache.lastip";
 inline constexpr std::string_view ZONEID_CACHE_FILENAME = "cache.zoneid.json";
@@ -15,6 +16,15 @@ inline constexpr int DEFAULT_CLOUDFLARE_TTL = 180;
 inline constexpr int DEFAULT_ALIYUN_TTL = 600;
 inline constexpr int MAX_API_RETRIES = 2;
 inline constexpr int API_TIMEOUT_SECONDS = 15;
+
+// HTTP client defaults
+inline constexpr int HTTP_TIMEOUT_SECONDS = 15;
+inline constexpr int HTTP_MAX_RETRIES = 3;
+inline constexpr int DEFAULT_TIMEOUT_SECONDS = 300;
+
+// IPv6 constants
+inline constexpr uint32_t ND6_INFINITE_LIFETIME = 0xFFFFFFFFU;
+inline constexpr long INFINITE_LIFETIME_SECONDS = 1000000000000L; // 1e12
 
 struct IPSource {
     std::string              interface_name; ///< network interface (optional)
