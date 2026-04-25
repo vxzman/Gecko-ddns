@@ -8,7 +8,6 @@
 #include <openssl/sha.h>
 
 #include <algorithm>
-#include <format>
 #include <chrono>
 #include <format>
 #include <iomanip>
