@@ -58,9 +58,16 @@ brew install cmake curl openssl
 # 基础编译
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
+#使用clang++编译
+cmake -B build \
+  -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DAPP_VERSION="v2.1.0"
 
 # 或使用构建脚本
-./build.sh
+# 使用clang++编译 export CC=clang CXX=clang++
+./build.sh 2.1.0
 ```
 
 编译产物：`build/alasia`
