@@ -4,3 +4,6 @@ build/
 .cache/
 compile_commands.json
 .clangd/
+.qwen/
+*.key
+config.json
