@@ -314,14 +314,8 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
         base_dir = abs_config.parent_path().string();
     }
 
-    // Resolve log output path
-    std::string log_output = cfg.general.log_output;
-    if (!log_output.empty() && log_output != "shell" && !std::filesystem::path(log_output).is_absolute()) {
-        log_output = (std::filesystem::path(base_dir) / log_output).string();
-        std::filesystem::create_directories(std::filesystem::path(log_output).parent_path(), ec);
-    }
-
-    if (!logger::init(log_output)) {
+    // Initialize logger
+    if (!logger::init()) {
         std::cerr << "Failed to initialize logging\n";
         curl_pool::cleanup();
         return 1;

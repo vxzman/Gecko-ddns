@@ -24,9 +24,8 @@ extern const char* COLOR_YELLOW;
 extern const char* COLOR_CYAN;
 extern const char* COLOR_GRAY;
 
-/// Initialize logging. output = "shell" → stdout with color;
-/// any other value is treated as a file path.
-bool init(const std::string& output);
+/// Initialize logging (always stdout with color if terminal).
+bool init();
 
 /// Set minimum log level to display
 void set_level(LogLevel level);

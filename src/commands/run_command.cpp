@@ -126,15 +126,8 @@ Result<int> RunCommand::execute(const CommandContext& ctx) {
         base_dir = abs_config.parent_path().string();
     }
     
-    // Resolve log output path
-    std::string log_output = cfg.general.log_output;
-    if (!log_output.empty() && log_output != "shell" && !fs::path(log_output).is_absolute()) {
-        log_output = (fs::path(base_dir) / log_output).string();
-        fs::create_directories(fs::path(log_output).parent_path(), ec);
-    }
-    
     // Initialize logger
-    if (!logger::init(log_output)) {
+    if (!logger::init()) {
         return Result<int>::error("Failed to initialize logger");
     }
     

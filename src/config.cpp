@@ -187,7 +187,6 @@ std::optional<Config> read_config(const std::string& path) {
     // general
     if (root.contains("general")) {
         const auto& g = root["general"];
-        cfg.general.log_output = jstr(g, "log_output", std::string(config::DEFAULT_LOG_OUTPUT));
         cfg.general.proxy      = jstr(g, "proxy");
 
         if (g.contains("get_ip")) {
@@ -258,7 +257,6 @@ bool write_config(const std::string& path, const Config& cfg) {
     }
     
     // general
-    root["general"]["log_output"] = cfg.general.log_output;
     root["general"]["proxy"]      = cfg.general.proxy;
     root["general"]["get_ip"]["interface"] = cfg.general.get_ip.interface_name;
     root["general"]["get_ip"]["urls"]      = cfg.general.get_ip.urls;

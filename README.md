@@ -1,377 +1,142 @@
 # Alasia — 轻量级动态 DNS 客户端
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20FreeBSD%20%7C%20OpenBSD%20%7C%20macOS-yellow)](README.md)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20FreeBSD%20%7C%20macOS-yellow)](README.md)
 [![Standard](https://img.shields.io/badge/C%2B%2B-23-blue)](README.md)
 
 > **Alasia** 名称源自 Aiolos 的变体，象征快速与灵动。寓意**快速响应网络变化，灵动更新 DNS 记录**。
 
 一个用现代 C++23 编写的高性能动态 DNS (DDNS) 客户端，支持多域名并发更新、IPv6 优先、跨平台部署。
 
----
+## 特性
 
-## ✨ 特性亮点
+- **多平台**：Linux、FreeBSD、macOS
+- **多服务商**：Cloudflare、阿里云 DNS（架构易扩展）
+- **IPv6 优先**：支持从网卡或 HTTP API 获取 IPv6 地址，自动过滤链路本地/ULA/环回地址
+- **并发更新**：多条 DNS 记录同时更新
+- **缓存机制**：IP 未变化时不触发 API 调用
+- **敏感信息管理**：`environment` 集中定义，通过 `$变量名` 引用，日志自动脱敏
+- **代理支持**：Cloudflare 支持 HTTP/SOCKS5 代理（仅 Cloudflare）
+- **连接池**：CURL 连接池 + TCP Keepalive
 
-| 类别 | 特性 |
-|------|------|
-| 🚀 **性能** | 并发更新多条 DNS 记录、CURL 连接池、TCP Keepalive |
-| 🔒 **安全** | 敏感信息集中管理、日志自动脱敏、缓存文件权限保护 (0600) |
-| 🌐 **网络** | IPv6 优先、支持网卡直连或 HTTP API 获取 IP |
-| 🛠️ **部署** | systemd / Crontab / launchd 多种部署方式 |
-| 📦 **服务商** | Cloudflare、阿里云 DNS |
+## 快速开始
 
----
-
-## 📋 目录
-
-- [快速开始](#-快速开始)
-- [配置指南](#-配置指南)
-- [命令行参数](#-命令行参数)
-- [部署方式](#-部署方式)
-- [故障排查](#-故障排查)
-- [技术架构](#-技术架构)
-
----
-
-## 🚀 快速开始
-
-### 1. 安装依赖
-
-本项目依赖以下系统库：
-- **CMake** - 构建系统
-- **C++ 编译器** - GCC 或 Clang
-- **libcurl** - HTTP 客户端库
-- **OpenSSL** - 加密库
-
-#### 使用构建脚本自动安装（推荐）
+### 1. 构建
 
 ```bash
-# Ubuntu/Debian/Fedora/Arch/macOS 自动检测并安装
-./build.sh --install-deps
+./build.sh          # 开发版本
+./build.sh 2.1.1    # 指定版本
 ```
 
-#### 手动安装
-
-**Ubuntu / Debian**
-```bash
-sudo apt update
-sudo apt install -y cmake build-essential libcurl4-openssl-dev libssl-dev
-```
-
-**RHEL / CentOS / Fedora**
-```bash
-# Fedora
-sudo dnf install -y cmake gcc-c++ libcurl-devel openssl-devel
-
-# RHEL/CentOS 7
-sudo yum install -y cmake gcc-c++ libcurl-devel openssl-devel
-
-# RHEL/CentOS 8+
-sudo dnf install -y cmake gcc-c++ libcurl-devel openssl-devel
-```
-
-**openSUSE / SUSE**
-```bash
-sudo zypper install -y cmake gcc-c++ libcurl-devel libopenssl-devel
-```
-
-**Arch Linux / Manjaro**
-```bash
-sudo pacman -S --noconfirm cmake base-devel curl openssl
-```
-
-**Alpine Linux**
-```bash
-sudo apk add --no-cache cmake g++ make curl-dev openssl-dev
-```
-
-**macOS**
-```bash
-brew install cmake curl openssl
-```
-
-**FreeBSD**
-```bash
-pkg install cmake gcc13 curl openssl
-```
-
-**OpenBSD**
-```bash
-pkg_add cmake g++ curl openssl
-```
-
-| 系统 | CMake | C++ 编译器 | libcurl | OpenSSL |
-|------|-------|-----------|---------|---------|
-| Ubuntu/Debian | `cmake` | `build-essential` | `libcurl4-openssl-dev` | `libssl-dev` |
-| RHEL/Fedora | `cmake` | `gcc-c++` | `libcurl-devel` | `openssl-devel` |
-| openSUSE | `cmake` | `gcc-c++` | `libcurl-devel` | `libopenssl-devel` |
-| Arch | `cmake` | `base-devel` | `curl` | `openssl` |
-| Alpine | `cmake` | `g++ make` | `curl-dev` | `openssl-dev` |
-| macOS | `cmake` | (系统自带) | `curl` | `openssl` |
-| FreeBSD | `cmake` | `gcc13` | `curl` | `openssl` |
-
-> **为什么需要手动安装？**
-> - libcurl 和 OpenSSL 是系统级 C 库，需要先编译安装
-> - CMake 只能检测已安装的库，或下载纯头文件库（如 nlohmann/json）
-> - Go/Rust 项目的依赖是纯代码，所以 `go mod`/`cargo` 可以自动下载
-
-### 2. 编译
-
-#### 使用构建脚本（推荐）
+验证：
 
 ```bash
-# 默认使用 GCC 编译
-./build.sh
-
-# 指定版本号
-./build.sh 2.1.0
-
-# 使用 Clang++ 编译
-CXX_COMPILER=clang++ C_COMPILER=clang ./build.sh 2.1.0
+./build/alasia version
 ```
 
-> **提示**：如果指定的编译器不存在，脚本会提示你是否切换回默认编译器。
+### 2. 配置
 
-#### 手动编译
-
-```bash
-# 使用 GCC 编译（默认）
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-
-# 使用 Clang++ 编译
-cmake -B build \
-  -DCMAKE_C_COMPILER=clang \
-  -DCMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_BUILD_TYPE=Release
-
-# 使用其他编译器（如 ccache + g++）
-cmake -B build \
-  -DCMAKE_CXX_COMPILER="ccache g++" \
-  -DCMAKE_C_COMPILER="ccache gcc" \
-  -DCMAKE_BUILD_TYPE=Release
-```
-
-#### 编译选项
-
-| 编译器 | CMAKE_C_COMPILER | CMAKE_CXX_COMPILER | 说明 |
-|--------|------------------|---------------------|------|
-| GCC（默认） | `gcc` | `g++` | 推荐用于 Linux |
-| Clang | `clang` | `clang++` | 更好的错误提示 |
-| Clang + ccache | `ccache gcc` | `ccache g++` | 加速重复编译 |
-
-编译产物：`build/alasia`
-
-### 3. 配置
-
-复制示例配置：
 ```bash
 cp config.example.json config.json
 ```
 
-编辑 `config.json`，在 `environment` 字段中填入你的 API 凭证（详见 [配置指南](#-配置指南)）。
+完整配置说明见下方 [配置](#配置) 一节。
 
-### 4. 运行
+### 3. 运行
 
 ```bash
-./build/alasia run -c config.json
+./build/alasia run -c config.json -d /etc/alasia
 ```
 
----
+## 配置
 
-## 📝 配置指南
+配置文件为 JSON 格式。以下示例使用 JSONC 语法（带注释）讲解字段，实际使用时请复制 `config.example.json` 并填入自己的值。
 
-### 配置结构
-
-配置文件为 JSON 格式，包含三个主要部分：
-
-```json
+```jsonc
 {
-    "environment": { /* 敏感信息集中存放 */ },
-    "general": { /* 全局配置 */ },
-    "records": [ /* DNS 记录列表 */ ]
-}
-```
+  // ── environment ──────────────────────────────────────────
+  // 敏感信息集中存放，通过 $变量名 在 records 中引用。
+  // 仅支持 $name 语法，不支持 ${name} 或系统环境变量。
+  "environment": {
+    "cf_token": "your_cloudflare_api_token",
+    "cf_zone": "your_cloudflare_zone_id",
+    "ak_id": "your_aliyun_access_key_id",
+    "ak_secret": "your_aliyun_access_key_secret"
+  },
 
-### 完整示例
-
-```json
-{
-    "environment": {
-        "cloudflare_token": "你的 Cloudflare API Token",
-        "cloudflare_zone_id": "你的 Zone ID",
-        "aliyun_key_id": "你的 AccessKey ID",
-        "aliyun_key_secret": "你的 AccessKey Secret"
+  // ── general ──────────────────────────────────────────────
+  "general": {
+    "get_ip": {
+      "interface": "eth0",                               // 网卡名（与 urls 二选一，interface 优先）
+      "urls": [                                          // HTTP API 回退方案
+        "https://ipv6.icanhazip.com",
+        "https://6.ipw.cn",
+        "https://v6.ipv6-test.com/api/myip.php"
+      ]
     },
-    "general": {
-        "get_ip": {
-            "interface": "eth0"
-        },
-        "log_output": "shell",
-        "proxy": ""
-    },
-    "records": [
-        {
-            "provider": "cloudflare",
-            "zone": "example.com",
-            "record": "www",
-            "ttl": 300,
-            "cloudflare": {
-                "api_token": "$cloudflare_token",
-                "zone_id": "$cloudflare_zone_id"
-            }
-        },
-        {
-            "provider": "aliyun",
-            "zone": "example.cn",
-            "record": "home",
-            "ttl": 600,
-            "aliyun": {
-                "access_key_id": "$aliyun_key_id",
-                "access_key_secret": "$aliyun_key_secret"
-            }
-        }
-    ]
-}
-```
+    "proxy": ""                                          // 全局代理 socks5:// 或 http://（仅 Cloudflare 生效）
+  },
 
-### 字段说明
+  // ── records ─────────────────────────────────────────────
+  "records": [
+    {
+      // 基础字段（所有服务商通用）
+      "provider": "cloudflare",                          // cloudflare | aliyun
+      "zone": "example.com",                             // 主域名
+      "record": "www",                                   // 子域名，@ 表示根域名
+      "ttl": 300,                                        // 可选，Cloudflare 默认 180，阿里云默认 600
+      "proxied": false,                                  // 可选，Cloudflare CDN 代理
+      "use_proxy": false,                                // 可选，是否使用 general.proxy
 
-#### `environment` - 敏感信息
-
-所有 API 凭证、Token 等敏感信息在此集中定义，通过 `$变量名` 方式引用。
-
-```json
-{
-    "environment": {
-        "cloudflare_token": "vF5k...",
-        "aliyun_key_id": "LTAI5t...",
-        "aliyun_key_secret": "xK9m..."
+      // 服务商专属字段（按 provider 选择其一）
+      "cloudflare": {
+        "api_token": "$cf_token",                        // 必需，$ 引用 environment
+        "zone_id": "$cf_zone"                            // 可选，留空自动获取
+      },
+      "aliyun": {
+        "access_key_id": "$ak_id",                       // 必需
+        "access_key_secret": "$ak_secret"                // 必需
+      }
     }
+  ]
 }
 ```
 
-#### `general` - 全局配置
+### 服务商对比
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `get_ip.interface` | string | 网卡名称（如 `eth0`、`en0`），与 `urls` 二选一 |
-| `get_ip.urls` | string[] | IP 查询 API 列表（如 `https://ipv6.icanhazip.com`） |
-| `log_output` | string | 日志输出：`shell` 或文件路径（相对于 `--dir`） |
-| `proxy` | string | 全局代理 URL（仅 Cloudflare 支持） |
+| | Cloudflare | 阿里云 |
+|--|------------|--------|
+| **认证** | API Token | AccessKey ID + Secret |
+| **权限** | `Zone:DNS:Edit` | `AliyunDNSFullAccess` |
+| **代理** | ✅ HTTP/SOCKS5 | ❌ 不支持 |
+| **Zone ID** | 留空自动获取 | — |
 
-#### `records` - DNS 记录列表
+## 命令行
 
-每条记录包含：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `provider` | string | 服务商：`cloudflare` 或 `aliyun` |
-| `zone` | string | 主域名（如 `example.com`） |
-| `record` | string | 子域名（如 `www`、`@`、`home`） |
-| `ttl` | number | TTL 时间（秒），Cloudflare 最小 120 |
-| `proxied` | boolean | Cloudflare CDN 代理（仅 Cloudflare） |
-| `cloudflare` | object | Cloudflare 配置（见下） |
-| `aliyun` | object | 阿里云配置（见下） |
-
-**Cloudflare 记录配置**
-```json
-{
-    "provider": "cloudflare",
-    "zone": "example.com",
-    "record": "www",
-    "ttl": 300,
-    "proxied": false,
-    "cloudflare": {
-        "api_token": "$cloudflare_token",
-        "zone_id": "$cloudflare_zone_id"
-    }
-}
+```
+alasia <command> [options]
 ```
 
-**阿里云记录配置**
-```json
-{
-    "provider": "aliyun",
-    "zone": "example.cn",
-    "record": "home",
-    "ttl": 600,
-    "aliyun": {
-        "access_key_id": "$aliyun_key_id",
-        "access_key_secret": "$aliyun_key_secret"
-    }
-}
-```
+| 命令 | 说明 |
+|------|------|
+| `run` | 执行 DDNS 更新 |
+| `version` | 显示版本信息 |
 
-### 变量引用
+`run` 命令参数：
 
-使用 `$变量名` 引用 `environment` 中定义的值：
+| 参数 | 简写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--config` | `-c` | 无 | 配置文件路径 |
+| `--dir` | `-d` | 配置目录 | 工作目录（存放缓存文件 `cache.lastip`） |
+| `--ignore-cache` | `-i` | false | 忽略缓存，强制更新 |
+| `--timeout` | `-t` | 300 | 超时时间（秒） |
 
-```json
-{
-    "environment": {
-        "my_token": "secret_value"
-    },
-    "records": [{
-        "cloudflare": {
-            "api_token": "$my_token"
-        }
-    }]
-}
-```
+## 部署
 
----
+### systemd（推荐）
 
-## 🖥️ 命令行参数
+`/etc/systemd/system/alasia.service`：
 
-### `run` 命令
-
-运行 DDNS 更新：
-
-```bash
-alasia run [选项]
-```
-
-| 参数 | 简写 | 类型 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `--config` | `-c` | string | 无 | 配置文件路径 |
-| `--dir` | `-d` | string | 配置目录 | 工作目录（缓存、日志） |
-| `--ignore-cache` | `-i` | boolean | false | 忽略缓存，强制更新 |
-| `--timeout` | `-t` | number | 300 | 超时时间（秒） |
-
-**示例**
-```bash
-# 使用指定配置
-alasia run -c /etc/alasia/config.json
-
-# 强制更新，忽略缓存
-alasia run -c config.json -i
-
-# 自定义超时时间
-alasia run -c config.json -t 600
-```
-
-### `version` 命令
-
-显示版本信息：
-```bash
-alasia version
-```
-
----
-
-## 🛠️ 部署方式
-
-### systemd 部署（推荐）
-
-#### 1. 创建目录和配置
-```bash
-sudo mkdir -p /etc/alasia
-sudo cp config.example.json /etc/alasia/config.json
-sudo chmod 600 /etc/alasia/config.json
-```
-
-#### 2. 创建服务文件 `/etc/systemd/system/alasia.service`
 ```ini
 [Unit]
 Description=Alasia DDNS Client
@@ -387,10 +152,12 @@ WorkingDirectory=/etc/alasia
 WantedBy=multi-user.target
 ```
 
-#### 3. 创建定时器 `/etc/systemd/system/alasia.timer`
+`/etc/systemd/system/alasia.timer`：
+
 ```ini
 [Unit]
 Description=Run Alasia DDNS every 10 minutes
+Requires=alasia.service
 
 [Timer]
 OnBootSec=5min
@@ -401,30 +168,22 @@ Unit=alasia.service
 WantedBy=timers.target
 ```
 
-#### 4. 启用服务
+启用：
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now alasia.timer
 ```
 
----
-
-### Crontab 部署
+### Crontab
 
 ```bash
-crontab -e
+*/10 * * * * /usr/local/bin/alasia run -c /etc/alasia/config.json -d /etc/alasia >> /var/log/alasia.log 2>&1
 ```
 
-添加任务（每 10 分钟执行）：
-```bash
-*/10 * * * * /usr/local/bin/alasia run -c /etc/alasia/config.json
-```
+### macOS launchd
 
----
-
-### macOS launchd 部署
-
-创建 `/Library/LaunchDaemons/com.alasia.plist`：
+`/Library/LaunchDaemons/com.alasia.plist`：
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -449,120 +208,36 @@ crontab -e
 </plist>
 ```
 
-加载服务：
+加载：
+
 ```bash
 sudo launchctl load /Library/LaunchDaemons/com.alasia.plist
 ```
 
----
+## 平台支持
 
-## 🐛 故障排查
-
-### 常见问题
-
-#### 配置解析失败
-```
-Config: record[0]: cloudflare.api_token is not set or empty
-```
-**解决**：检查 `environment` 中是否定义变量，引用名称是否正确。
-
-#### IP 获取失败
-```
-Failed to get current IP
-```
-**解决**：
-- 检查网卡名称（`ip addr` 或 `ifconfig`）
-- 确保 IPv6 已启用
-- 改用 HTTP API 方式（配置 `urls` 字段）
-
-#### Cloudflare API 权限不足
-```
-Invalid API Token
-```
-**解决**：
-- 确认 Token 具有 `Zone:DNS:Edit` 权限
-- 检查 Zone ID 是否正确
-
-#### 阿里云签名失败
-```
-InvalidSignature
-```
-**解决**：
-- 检查 AccessKey ID 和 Secret 是否正确
-- 确保系统时间准确（签名依赖时间戳）
-
----
-
-## 🏗️ 技术架构
-
-### 目录结构
-
-```
-alasia/
-├── CMakeLists.txt          # CMake 构建配置
-├── build.sh                # 构建脚本
-├── config.example.json     # 配置示例
-├── LICENSE                 # MIT 许可证
-├── README.md               # 本文档
-└── src/
-    ├── main.cpp            # 程序入口
-    ├── commands/           # 命令行处理
-    ├── config/             # 配置解析
-    ├── core/               # 核心类型定义
-    ├── http/               # HTTP 客户端
-    ├── provider/           # DNS 服务商实现
-    └── services/           # 服务层（IP/DNS/缓存）
-```
-
-### 核心模块
-
-| 模块 | 职责 |
-|------|------|
-| `commands` | 命令行参数解析与命令分发 |
-| `config` | JSON 配置解析、环境变量展开、验证 |
-| `http` | CURL 连接池、HTTP 请求封装 |
-| `provider` | Cloudflare / 阿里云 API 实现 |
-| `services/ip` | IPv6 地址获取（网卡/netlink 或 HTTP API） |
-| `services/dns` | DNS 记录查询与更新 |
-| `services/cache` | IP 缓存（避免频繁 API 调用） |
-
-### 技术栈
-
-- **语言标准**：C++23
-- **构建系统**：CMake
-- **JSON 库**：nlohmann/json
-- **HTTP 库**：libcurl
-- **加密库**：OpenSSL（阿里云 HMAC-SHA1 签名）
-
----
-
-## 📊 平台支持
-
-| 平台 | IPv6 获取（接口） | IPv6 获取（HTTP API） | 状态 |
+| 平台 | IPv6 获取（网卡） | IPv6 获取（HTTP API） | 状态 |
 |------|-------------------|----------------------|------|
-| Linux | ✅ netlink (`RTM_GETADDR`) | ✅ | ✅ 完整支持 |
-| FreeBSD | ✅ ioctl (`SIOCGIFALIFETIME_IN6`) | ✅ | ✅ 完整支持 |
-| OpenBSD | ❌ | ✅ | ⚠️ 仅支持 HTTP API 方式 |
-| macOS | ❌ | ✅ | ⚠️ 仅支持 HTTP API 方式 |
+| Linux | ✅ netlink | ✅ | 完整支持 |
+| FreeBSD | ✅ ioctl | ✅ | 完整支持 |
+| OpenBSD | ❌ | ✅ | 仅 HTTP API |
+| macOS | ❌ | ✅ | 仅 HTTP API |
 
-> **注意**：由于缺乏测试环境，OpenBSD 和 macOS 的网卡接口读取 IPv6 功能暂时移除。
-> 如果你在这些平台上有测试条件，欢迎提交 PR 恢复支持！
+## 故障排查
 
----
+| 错误 | 解决方案 |
+|------|----------|
+| `Config: record[0]: cloudflare.api_token is not set` | 检查 `environment` 中变量是否定义，引用名是否正确 |
+| `Failed to get current IP` | 检查网卡名（`ip addr`），确保 IPv6 已启用，或改用 `urls` API 方式 |
+| `Invalid API Token` | 检查 Token 和 `Zone:DNS:Edit` 权限 |
+| `InvalidSignature` | 检查 AccessKey，确保系统时间准确（NTP 同步） |
 
-## 🔒 安全说明
+日志默认输出到 stdout，systemd 用户可通过 `journalctl -u alasia.service -f` 查看。
 
-1. **文件权限**：缓存文件自动设置为 `0600`（仅所有者可读写）
-2. **日志脱敏**：敏感信息自动隐藏，防止泄露
-3. **配置保护**：建议配置文件权限设置为 `600`
-4. **密钥管理**：所有凭证在 `environment` 中集中管理，便于权限控制
+## 贡献与许可
 
----
+欢迎提交 Issue 和 Pull Request。
 
-## 📄 许可证
+项目采用 **MIT License** — 详见 [LICENSE](LICENSE) 文件。
 
-采用 **MIT License** - 详见 [LICENSE](LICENSE) 文件。
-
----
-
-**Made with ❤️ by the Alasia Team**
+致谢：[nlohmann/json](https://github.com/nlohmann/json)、[argparse](https://github.com/p-ranav/argparse)、[libcurl](https://curl.se/)、[OpenSSL](https://www.openssl.org/)

@@ -22,8 +22,7 @@ const char* COLOR_GRAY    = "\033[90m";
 
 namespace {
 
-FILE* g_out         = nullptr;
-bool  g_is_terminal = false;
+bool g_is_terminal = false;
 LogLevel g_level    = LogLevel::Info;  // Default to Info
 
 bool check_is_terminal(FILE* f) {
@@ -76,18 +75,8 @@ std::string sanitize(const std::string& msg) {
 
 } // anonymous namespace
 
-bool init(const std::string& output) {
-    if (output.empty() || output == "shell") {
-        g_out         = nullptr;
-        g_is_terminal = check_is_terminal(stdout);
-    } else {
-        g_out = fopen(output.c_str(), "a");
-        if (!g_out) {
-            fprintf(stderr, "Failed to open log file: %s\n", output.c_str());
-            return false;
-        }
-        g_is_terminal = false;
-    }
+bool init() {
+    g_is_terminal = check_is_terminal(stdout);
     return true;
 }
 
@@ -106,16 +95,14 @@ void log_line(const char* level_str, const char* color, LogLevel level, const st
 
     std::string sanitized = sanitize(msg);
 
-    FILE* target = g_out ? g_out : stdout;
-
     if (g_is_terminal) {
         std::string txt = std::format("{} {}{}{} {}\n", timestamp(), color, level_str, COLOR_RESET, sanitized);
-        std::fputs(txt.c_str(), target);
+        std::fputs(txt.c_str(), stdout);
     } else {
         std::string txt = std::format("{} {} {}\n", timestamp(), level_str, sanitized);
-        std::fputs(txt.c_str(), target);
+        std::fputs(txt.c_str(), stdout);
     }
-    std::fflush(target);
+    std::fflush(stdout);
 }
 
 void fatal(std::string_view msg) {

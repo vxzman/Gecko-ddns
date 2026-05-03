@@ -1,9 +1,9 @@
 {
     "environment": {
-        "cloudflare_token": "your_cloudflare_api_token_here",
-        "cloudflare_zone_id": "your_cloudflare_zone_id_here",
-        "aliyun_access_key_id": "your_aliyun_access_key_id_here",
-        "aliyun_access_key_secret": "your_aliyun_access_key_secret_here"
+        "cf_token": "your_cloudflare_api_token_here",
+        "cf_zone": "your_cloudflare_zone_id_here",
+        "ak_id": "your_aliyun_access_key_id_here",
+        "ak_secret": "your_aliyun_access_key_secret_here"
     },
     "general": {
         "get_ip": {
@@ -14,7 +14,6 @@
                 "https://v6.ipv6-test.com/api/myip.php"
             ]
         },
-        "log_output": "shell",
         "proxy": ""
     },
     "records": [
@@ -26,8 +25,8 @@
             "proxied": false,
             "use_proxy": false,
             "cloudflare": {
-                "api_token": "$cloudflare_token",
-                "zone_id": "$cloudflare_zone_id"
+                "api_token": "$cf_token",
+                "zone_id": "$cf_zone"
             }
         },
         {
@@ -37,8 +36,8 @@
             "ttl": 600,
             "use_proxy": false,
             "aliyun": {
-                "access_key_id": "$aliyun_access_key_id",
-                "access_key_secret": "$aliyun_access_key_secret"
+                "access_key_id": "$ak_id",
+                "access_key_secret": "$ak_secret"
             }
         }
     ]

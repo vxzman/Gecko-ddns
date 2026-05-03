@@ -9,7 +9,6 @@
 namespace config {
 
 // Configuration defaults
-inline constexpr std::string_view DEFAULT_LOG_OUTPUT = "shell";
 inline constexpr std::string_view CACHE_FILENAME = "cache.lastip";
 inline constexpr std::string_view ZONEID_CACHE_FILENAME = "cache.zoneid.json";
 inline constexpr int DEFAULT_CLOUDFLARE_TTL = 180;
@@ -33,7 +32,6 @@ struct IPSource {
 
 struct GeneralConfig {
     IPSource    get_ip;
-    std::string log_output;  ///< "shell" or file path (relative to base_dir if not absolute)
     std::string proxy;       ///< global proxy (optional)
 };
 

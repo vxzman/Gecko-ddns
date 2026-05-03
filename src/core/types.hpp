@@ -17,7 +17,6 @@ namespace alasia {
 #endif
 
 // Configuration defaults
-inline constexpr std::string_view DEFAULT_LOG_OUTPUT = "shell";
 inline constexpr std::string_view CACHE_FILENAME = "cache.lastip";
 inline constexpr std::string_view ZONEID_CACHE_FILENAME = "cache.zoneid.json";
 inline constexpr int DEFAULT_CLOUDFLARE_TTL = 180;
