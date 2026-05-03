@@ -1,63 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Check for --install-deps flag
-if [[ "${1:-}" == "--install-deps" ]]; then
-    echo "Installing system dependencies..."
-    
-    if command -v apt-get &> /dev/null; then
-        sudo apt-get update
-        sudo apt-get install -y cmake build-essential libcurl4-openssl-dev libssl-dev
-    elif command -v dnf &> /dev/null; then
-        sudo dnf install -y cmake gcc-c++ libcurl-devel openssl-devel
-    elif command -v yum &> /dev/null; then
-        sudo yum install -y cmake gcc-c++ libcurl-devel openssl-devel
-    elif command -v pacman &> /dev/null; then
-        sudo pacman -S --noconfirm cmake base-devel curl openssl
-    elif command -v brew &> /dev/null; then
-        brew install cmake curl openssl
-    else
-        echo "Unsupported package manager. Please install dependencies manually."
-        exit 1
-    fi
-    
-    echo "Dependencies installed successfully!"
-    exit 0
-fi
-
 VERSION="${1:-dev}"
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Compiler selection (defaults to gcc/g++, can be overridden)
-: "${CXX_COMPILER:=g++}"
+# Default compiler by platform
+if [[ "$(uname -s)" == "Linux" ]]; then
+    : "${CXX_COMPILER:=g++}"
+else
+    : "${CXX_COMPILER:=clang++}"
+fi
 
-# Function to check if a compiler exists
-check_compiler() {
-    local compiler="$1"
-    local display_name="$2"
-
-    if ! command -v "$compiler" &> /dev/null; then
-        echo "Warning: $display_name ($compiler) not found"
-        read -rp "Switch back to default compiler (g++)? [Y/n] " -n 1
-        echo
-        if [[ $REPLY =~ ^[Nn]$ ]]; then
-            echo "Build cancelled."
-            exit 1
-        else
-            if command -v g++ &> /dev/null; then
-                echo "Switching to g++..."
-                CXX_COMPILER="g++"
-            else
-                echo "Error: Default compiler (g++) also not found!"
-                exit 1
-            fi
-        fi
-    fi
-}
-
-# Check compiler availability
-check_compiler "$CXX_COMPILER" "${CXX_COMPILER}"
+# Validate compiler exists
+if ! command -v "$CXX_COMPILER" &> /dev/null; then
+    echo "Error: Compiler '$CXX_COMPILER' not found"
+    exit 1
+fi
 
 # Get compiler version
 CXX_VERSION=$("$CXX_COMPILER" --version 2>/dev/null | head -n1 || echo "unknown")
@@ -82,6 +41,14 @@ cmake -B build \
     -DAPP_BUILD_DATE="${BUILD_DATE}" \
     -DAPP_COMPILER="${CXX_VERSION}"
 
-cmake --build build -j"$(nproc)"
+if command -v nproc &> /dev/null; then
+    JOBS=$(nproc)
+elif sysctl -n hw.ncpu &> /dev/null 2>&1; then
+    JOBS=$(sysctl -n hw.ncpu)
+else
+    JOBS=1
+fi
+
+cmake --build build -j"${JOBS}"
 
 echo "Build successful: $(pwd)/build/alasia"
