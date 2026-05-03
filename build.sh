@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Check for --install-deps flag
+if [[ "${1:-}" == "--install-deps" ]]; then
+    echo "Installing system dependencies..."
+    
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential libcurl4-openssl-dev libssl-dev
+    elif command -v dnf &> /dev/null; then
+        sudo dnf install -y cmake gcc-c++ libcurl-devel openssl-devel
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y cmake gcc-c++ libcurl-devel openssl-devel
+    elif command -v pacman &> /dev/null; then
+        sudo pacman -S --noconfirm cmake base-devel curl openssl
+    elif command -v brew &> /dev/null; then
+        brew install cmake curl openssl
+    else
+        echo "Unsupported package manager. Please install dependencies manually."
+        exit 1
+    fi
+    
+    echo "Dependencies installed successfully!"
+    exit 0
+fi
+
 VERSION="${1:-dev}"
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)

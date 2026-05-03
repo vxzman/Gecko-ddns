@@ -37,20 +37,83 @@
 
 ### 1. 安装依赖
 
-**Ubuntu / Debian**
+本项目依赖以下系统库：
+- **CMake** - 构建系统
+- **C++ 编译器** - GCC 或 Clang
+- **libcurl** - HTTP 客户端库
+- **OpenSSL** - 加密库
+
+#### 使用构建脚本自动安装（推荐）
+
 ```bash
-sudo apt install cmake build-essential libcurl4-openssl-dev libssl-dev
+# Ubuntu/Debian/Fedora/Arch/macOS 自动检测并安装
+./build.sh --install-deps
 ```
 
-**FreeBSD**
+#### 手动安装
+
+**Ubuntu / Debian**
 ```bash
-pkg install cmake gcc curl openssl
+sudo apt update
+sudo apt install -y cmake build-essential libcurl4-openssl-dev libssl-dev
+```
+
+**RHEL / CentOS / Fedora**
+```bash
+# Fedora
+sudo dnf install -y cmake gcc-c++ libcurl-devel openssl-devel
+
+# RHEL/CentOS 7
+sudo yum install -y cmake gcc-c++ libcurl-devel openssl-devel
+
+# RHEL/CentOS 8+
+sudo dnf install -y cmake gcc-c++ libcurl-devel openssl-devel
+```
+
+**openSUSE / SUSE**
+```bash
+sudo zypper install -y cmake gcc-c++ libcurl-devel libopenssl-devel
+```
+
+**Arch Linux / Manjaro**
+```bash
+sudo pacman -S --noconfirm cmake base-devel curl openssl
+```
+
+**Alpine Linux**
+```bash
+sudo apk add --no-cache cmake g++ make curl-dev openssl-dev
 ```
 
 **macOS**
 ```bash
 brew install cmake curl openssl
 ```
+
+**FreeBSD**
+```bash
+pkg install cmake gcc13 curl openssl
+```
+
+**OpenBSD**
+```bash
+pkg_add cmake g++ curl openssl
+```
+
+| 系统 | CMake | C++ 编译器 | libcurl | OpenSSL |
+|------|-------|-----------|---------|---------|
+| Ubuntu/Debian | `cmake` | `build-essential` | `libcurl4-openssl-dev` | `libssl-dev` |
+| RHEL/Fedora | `cmake` | `gcc-c++` | `libcurl-devel` | `openssl-devel` |
+| openSUSE | `cmake` | `gcc-c++` | `libcurl-devel` | `libopenssl-devel` |
+| Arch | `cmake` | `base-devel` | `curl` | `openssl` |
+| Alpine | `cmake` | `g++ make` | `curl-dev` | `openssl-dev` |
+| macOS | `cmake` | (系统自带) | `curl` | `openssl` |
+| FreeBSD | `cmake` | `gcc13` | `curl` | `openssl` |
+
+> **为什么需要手动安装？**
+> - libcurl 和 OpenSSL 是系统级 C 库，需要先编译安装
+> - CMake 只能检测已安装的库，或下载纯头文件库（如 nlohmann/json）
+> - Go/Rust 项目的依赖是纯代码，所以 `go mod`/`cargo` 可以自动下载
 
 ### 2. 编译
 
