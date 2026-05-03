@@ -14,10 +14,13 @@ CurlHandle::CurlHandle() : handle_(curl_easy_init()) {
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPALIVE, 1L);
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPIDLE, 60L);
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPINTVL, 60L);
-        
+
         // DNS 缓存优化：缓存 60 秒
         curl_easy_setopt(handle_, CURLOPT_DNS_CACHE_TIMEOUT, 60L);
         
+        // 连接超时（秒），防止连接卡住
+        curl_easy_setopt(handle_, CURLOPT_CONNECTTIMEOUT, 10L);
+
         // 连接复用优化
         curl_easy_setopt(handle_, CURLOPT_MAXCONNECTS, 10L);
     }
@@ -52,10 +55,13 @@ void CurlHandle::reset() {
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPALIVE, 1L);
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPIDLE, 60L);
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPINTVL, 60L);
-        
+
         // DNS 缓存优化：缓存 60 秒
         curl_easy_setopt(handle_, CURLOPT_DNS_CACHE_TIMEOUT, 60L);
         
+        // 连接超时（秒），防止连接卡住
+        curl_easy_setopt(handle_, CURLOPT_CONNECTTIMEOUT, 10L);
+
         // 连接复用优化
         curl_easy_setopt(handle_, CURLOPT_MAXCONNECTS, 10L);
     }

@@ -224,7 +224,7 @@ static void update_records_parallel(
     int                   timeout_sec,
     int&                  success_count,
     int&                  fail_count) {
-    
+
     std::vector<UpdateResult> results(cfg.records.size());
     std::vector<std::thread> threads;
     threads.reserve(cfg.records.size());
@@ -238,18 +238,27 @@ static void update_records_parallel(
     }
 
     auto start = std::chrono::steady_clock::now();
+    
+    // Join all threads, but stop waiting after timeout or shutdown
     for (auto& t : threads) {
-        auto remaining = std::chrono::seconds(timeout_sec) - (std::chrono::steady_clock::now() - start);
-        if (remaining <= std::chrono::seconds::zero()) {
+        if (timed_out.load() || is_shutdown_requested()) {
+            break;
+        }
+        
+        auto elapsed = std::chrono::steady_clock::now() - start;
+        if (elapsed >= std::chrono::seconds(timeout_sec)) {
             timed_out.store(true);
             logger::warning("Timeout reached ({} seconds), forcing shutdown", timeout_sec);
             break;
         }
+        
         t.join();
-        if (is_shutdown_requested()) {
-            timed_out.store(true);
-            logger::warning("Shutdown requested, stopping remaining threads");
-            break;
+    }
+    
+    // Join any remaining threads (they should exit quickly after timed_out is set)
+    for (auto& t : threads) {
+        if (t.joinable()) {
+            t.join();
         }
     }
 
