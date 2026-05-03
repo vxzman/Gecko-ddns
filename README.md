@@ -54,21 +54,48 @@ brew install cmake curl openssl
 
 ### 2. 编译
 
+#### 使用构建脚本（推荐）
+
 ```bash
-# 基础编译
+# 默认使用 GCC 编译
+./build.sh
+
+# 指定版本号
+./build.sh 2.1.0
+
+# 使用 Clang++ 编译
+CXX_COMPILER=clang++ C_COMPILER=clang ./build.sh 2.1.0
+```
+
+> **提示**：如果指定的编译器不存在，脚本会提示你是否切换回默认编译器。
+
+#### 手动编译
+
+```bash
+# 使用 GCC 编译（默认）
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
-#使用clang++编译
+
+# 使用 Clang++ 编译
 cmake -B build \
   -DCMAKE_C_COMPILER=clang \
   -DCMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DAPP_VERSION="v2.1.0"
+  -DCMAKE_BUILD_TYPE=Release
 
-# 或使用构建脚本
-# 使用clang++编译 export CC=clang CXX=clang++
-./build.sh 2.1.0
+# 使用其他编译器（如 ccache + g++）
+cmake -B build \
+  -DCMAKE_CXX_COMPILER="ccache g++" \
+  -DCMAKE_C_COMPILER="ccache gcc" \
+  -DCMAKE_BUILD_TYPE=Release
 ```
+
+#### 编译选项
+
+| 编译器 | CMAKE_C_COMPILER | CMAKE_CXX_COMPILER | 说明 |
+|--------|------------------|---------------------|------|
+| GCC（默认） | `gcc` | `g++` | 推荐用于 Linux |
+| Clang | `clang` | `clang++` | 更好的错误提示 |
+| Clang + ccache | `ccache gcc` | `ccache g++` | 加速重复编译 |
 
 编译产物：`build/alasia`
 

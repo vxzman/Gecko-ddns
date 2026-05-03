@@ -96,11 +96,13 @@ target_link_libraries(alasia PRIVATE
 set(APP_VERSION "dev" CACHE STRING "Application version string")
 set(APP_COMMIT  ""    CACHE STRING "Git commit hash")
 set(APP_BUILD_DATE "" CACHE STRING "Build date (UTC ISO 8601)")
+set(APP_COMPILER "" CACHE STRING "Compiler version string")
 
 target_compile_definitions(alasia PRIVATE
     APP_VERSION="${APP_VERSION}"
     APP_COMMIT="${APP_COMMIT}"
     APP_BUILD_DATE="${APP_BUILD_DATE}"
+    APP_COMPILER="${APP_COMPILER}"
 )
 
 # ─── Install ───────────────────────────────────────────────────────────────────
