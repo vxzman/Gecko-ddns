@@ -151,12 +151,15 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 return std::unexpected("netlink recv timeout");
             }
+            if (errno == EINTR) {
+                continue;  // interrupted by signal, retry
+            }
             return std::unexpected(std::string("recv() failed: ") + strerror(errno));
         }
 
         const nlmsghdr* nlh = reinterpret_cast<const nlmsghdr*>(buf);
         for (; NLMSG_OK(nlh, (unsigned)len); nlh = NLMSG_NEXT(nlh, len)) {
-            if (nlh->nlmsg_type == NLMSG_DONE)  { break; }
+            if (nlh->nlmsg_type == NLMSG_DONE)  { goto done; }
             if (nlh->nlmsg_type == NLMSG_ERROR) { return std::unexpected("netlink error"); }
             if (nlh->nlmsg_type != RTM_NEWADDR)  continue;
 
@@ -198,6 +201,7 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
         }
     }
 
+done:
     if (result.empty()) return std::unexpected("No suitable IPv6 address on interface " + std::string(iface_name));
     return result;
 }
