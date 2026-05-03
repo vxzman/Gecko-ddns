@@ -39,6 +39,8 @@ static void print_version() {
         std::cout << "commit: " APP_COMMIT "\n";
     if (std::string(APP_BUILD_DATE).size() > 0)
         std::cout << "built:  " APP_BUILD_DATE "\n";
+    if (std::string(APP_COMPILER).size() > 0)
+        std::cout << "compiler: " APP_COMPILER "\n";
 }
 
 // ─── Update Result ─────────────────────────────────────────────────────────────
