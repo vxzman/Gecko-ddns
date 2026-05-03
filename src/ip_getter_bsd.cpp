@@ -1,33 +1,25 @@
-// BSD-family (macOS/FreeBSD/OpenBSD) ioctl implementation for IPv6 address retrieval
+// FreeBSD ioctl implementation for IPv6 address retrieval
 // Reference: goddns/internal/platform/ifaddr/freebsd_ioctl.go
 
 #include "ip_getter.hpp"
 #include "log.hpp"
 
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+#if defined(__FreeBSD__)
 
-#include <arpa/inet.h>
-#include <net/if.h>
-#include <ifaddrs.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
 #include <cstring>
 #include <ctime>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
-#if defined(__APPLE__)
-#include <netinet6/in6_var.h>
-#endif
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <net/if.h>
+#include <ifaddrs.h>
 
-#if defined(__FreeBSD__)
+// FreeBSD in6_var.h for IPv6 address lifetime ioctl
 #include <netinet6/in6_var.h>
-#endif
-
-#if defined(__OpenBSD__)
-#include <netinet6/in6_var.h>
-#include <netinet/ip6.h>
-#endif
 
 namespace ip_getter {
 
@@ -35,7 +27,7 @@ namespace {
 
 constexpr uint32_t ND6_INFINITE_LIFETIME = 0xFFFFFFFFU;
 
-/// Get IPv6 address lifetime information using ioctl
+/// Get IPv6 address lifetime information using SIOCGIFALIFETIME_IN6 ioctl
 static int get_ipv6_lifetime(const std::string& ifname,
                               const struct sockaddr_in6& sin6,
                               uint32_t& pltime_out,
@@ -45,8 +37,6 @@ static int get_ipv6_lifetime(const std::string& ifname,
         return -1;
     }
 
-#if defined(__APPLE__)
-    // macOS uses in6_ifreq with slightly different structure layout
     struct in6_ifreq ifr6;
     memset(&ifr6, 0, sizeof(ifr6));
     strncpy(ifr6.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
@@ -60,41 +50,13 @@ static int get_ipv6_lifetime(const std::string& ifname,
     struct in6_addrlifetime lt = ifr6.ifr_ifru.ifru_lifetime;
     time_t now = time(nullptr);
 
+    // FreeBSD: ia6t_preferred and ia6t_expire are absolute timestamps
     pltime_out = (lt.ia6t_preferred != (time_t)-1 && lt.ia6t_preferred > now)
                      ? (uint32_t)(lt.ia6t_preferred - now)
                      : ND6_INFINITE_LIFETIME;
     vltime_out = (lt.ia6t_expire != (time_t)-1 && lt.ia6t_expire > now)
                      ? (uint32_t)(lt.ia6t_expire - now)
                      : ND6_INFINITE_LIFETIME;
-
-#elif defined(__FreeBSD__)
-    struct in6_ifreq ifr6;
-    memset(&ifr6, 0, sizeof(ifr6));
-    strncpy(ifr6.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
-    ifr6.ifr_addr = sin6;
-
-    if (ioctl(s, SIOCGIFALIFETIME_IN6, &ifr6) == -1) {
-        close(s);
-        return -1;
-    }
-
-    struct in6_addrlifetime lt = ifr6.ifr_ifru.ifru_lifetime;
-    time_t now = time(nullptr);
-
-    pltime_out = (lt.ia6t_preferred != (time_t)-1)
-                     ? (uint32_t)(lt.ia6t_preferred - now)
-                     : ND6_INFINITE_LIFETIME;
-    vltime_out = (lt.ia6t_expire != (time_t)-1)
-                     ? (uint32_t)(lt.ia6t_expire - now)
-                     : ND6_INFINITE_LIFETIME;
-
-#elif defined(__OpenBSD__)
-    // OpenBSD uses different ioctl interface
-    // Note: OpenBSD may not fully support SIOCGIFALIFETIME_IN6
-    // Fall back to infinite lifetime if not available
-    pltime_out = ND6_INFINITE_LIFETIME;
-    vltime_out = ND6_INFINITE_LIFETIME;
-#endif
 
     close(s);
     return 0;
@@ -172,4 +134,4 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
 
 } // namespace ip_getter
 
-#endif // __APPLE__ || __FreeBSD__ || __OpenBSD__
+#endif // __FreeBSD__

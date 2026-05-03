@@ -4,7 +4,11 @@
 #include "http_client.hpp"
 #include "log.hpp"
 
-// RAII wrapper for socket file descriptor
+#include <unistd.h>
+
+// ─── RAII wrapper for socket file descriptor (Linux netlink) ────────────────
+
+#if defined(__linux__)
 class SocketGuard {
     int fd_;
 public:
@@ -20,8 +24,7 @@ public:
     }
 };
 
-// Linux netlink headers (only on Linux)
-#if defined(__linux__)
+// Linux netlink headers
 #include <asm/types.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
@@ -30,7 +33,6 @@ public:
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <sys/socket.h>
-#include <unistd.h>
 
 // CURL for HTTP API fallback
 #include <curl/curl.h>
@@ -47,66 +49,16 @@ public:
 
 namespace ip_getter {
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
+// ─── Netlink IPv6 getter (Linux only) ────────────────────────────────────────
 
-static bool is_link_local(const uint8_t* addr16) {
-    return addr16[0] == 0xfe && (addr16[1] & 0xc0) == 0x80;
-}
+#if defined(__linux__)
 
-static bool is_loopback(const uint8_t* addr16) {
-    for (int i = 0; i < 15; ++i) if (addr16[i] != 0) return false;
-    return addr16[15] == 1;
-}
-
-static bool is_ula(const uint8_t* addr16) {
-    return (addr16[0] == 0xfc || addr16[0] == 0xfd);
-}
-
+/// Format raw IPv6 bytes to string (Linux-only helper).
 static std::string format_ipv6(const uint8_t* addr16) {
     char buf[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, addr16, buf, sizeof(buf));
     return buf;
 }
-
-/// Populate IPv6Info fields (matching Go version's PopulateInfo)
-static void populate_info(IPv6Info* info) {
-    if (info->ip.empty()) return;
-
-    // Convert IP to bytes for checking
-    uint8_t addr[16];
-    if (inet_pton(AF_INET6, info->ip.c_str(), addr) != 1) return;
-
-    info->is_unique_local = is_ula(addr);
-
-    if (is_link_local(addr)) {
-        info->scope = "Link Local";
-    } else if (info->is_unique_local) {
-        info->scope = "Unique Local (ULA)";
-    } else {
-        info->scope = "Global Unicast";
-    }
-
-    info->is_deprecated = (info->preferred_lft <= 0 && info->valid_lft > 0);
-
-    if (info->valid_lft == 0) {
-        info->address_state = "Expired";
-    } else if (info->is_deprecated) {
-        info->address_state = "Deprecated";
-    } else if (info->preferred_lft < info->valid_lft) {
-        info->address_state = "Preferred/Dynamic";
-    } else {
-        info->address_state = "Preferred/Static";
-    }
-
-    info->is_candidate = (info->scope == "Global Unicast" &&
-                          !info->is_deprecated &&
-                          !info->is_unique_local &&
-                          info->valid_lft > 0);
-}
-
-// ─── Netlink IPv6 getter (Linux only) ────────────────────────────────────────
-
-#if defined(__linux__)
 
 std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string_view iface_name) {
     unsigned int iface_idx = if_nametoindex(iface_name.data());
@@ -119,7 +71,7 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
     if (sock.get() < 0) {
         return std::unexpected(std::string("socket() failed: ") + strerror(errno));
     }
-    
+
     // Set receive timeout (5 seconds)
     struct timeval tv;
     tv.tv_sec = 5;
@@ -219,27 +171,27 @@ static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
         err = result.error();
         return "";
     }
-    
+
     // Parse response - extract first line and trim
     std::string body = result->body;
     auto newline_pos = body.find('\n');
     if (newline_pos != std::string::npos) {
         body = body.substr(0, newline_pos);
     }
-    
+
     // Trim whitespace
     auto is_space = [](unsigned char c) { return std::isspace(c); };
-    auto trimmed = body | std::views::drop_while(is_space) 
-                         | std::views::reverse 
-                         | std::views::drop_while(is_space) 
+    auto trimmed = body | std::views::drop_while(is_space)
+                         | std::views::reverse
+                         | std::views::drop_while(is_space)
                          | std::views::reverse;
     std::string ip(trimmed.begin(), trimmed.end());
-    
+
     if (ip.empty()) {
         err = "Empty response from API";
         return "";
     }
-    
+
     return ip;
 }
 
@@ -248,21 +200,38 @@ static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
 std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vector<std::string>& urls) {
     if (urls.empty()) { return std::unexpected("No API URLs configured"); }
 
-    for (const auto& url : urls) {
-        logger::info("Querying API: {}", url);
-        std::string err;
-        std::string ip = fetch_ip_from_url(url, err);
-        if (!ip.empty()) {
-            logger::info("API {} succeeded: {}", url, ip);
+    // Query all URLs concurrently
+    std::vector<std::thread> threads;
+    std::vector<std::string> results(urls.size());
+    std::vector<std::string> errors(urls.size());
+
+    for (size_t i = 0; i < urls.size(); ++i) {
+        logger::info("Querying API: {}", urls[i]);
+        threads.emplace_back([&urls, &results, &errors, i]() {
+            std::string err;
+            std::string ip = fetch_ip_from_url(urls[i], err);
+            results[i] = std::move(ip);
+            errors[i]  = std::move(err);
+        });
+    }
+
+    // Wait for all and collect results
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    // Return the first successful result
+    for (size_t i = 0; i < urls.size(); ++i) {
+        if (!results[i].empty()) {
+            logger::info("API {} succeeded: {}", urls[i], results[i]);
             IPv6Info info;
-            info.ip            = ip;
-            info.preferred_lft = config::INFINITE_LIFETIME_SECONDS; // treat as permanent
+            info.ip            = results[i];
+            info.preferred_lft = config::INFINITE_LIFETIME_SECONDS;
             info.valid_lft     = config::INFINITE_LIFETIME_SECONDS;
             populate_info(&info);
             return std::vector<IPv6Info>{info};
         }
-        logger::error("API {} failed: {}", url, err);
-        // keep last err
+        logger::error("API {} failed: {}", urls[i], errors[i]);
     }
     return std::unexpected("All API requests failed");
 }
@@ -271,7 +240,7 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vecto
 
 std::expected<std::string, std::string> select_best(const std::vector<IPv6Info>& infos) {
     auto candidates = infos | std::views::filter([](const IPv6Info& info) { return info.is_candidate; });
-    
+
     if (candidates.empty()) {
         return std::unexpected("No suitable global unicast IPv6 candidate found");
     }

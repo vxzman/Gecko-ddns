@@ -538,14 +538,15 @@ alasia/
 
 ## 📊 平台支持
 
-| 平台 | IPv6 获取 | 状态 |
-|------|----------|------|
-| Linux | netlink (`RTM_GETADDR`) | ✅ 完整支持 |
-| FreeBSD | ioctl | ✅ 支持 |
-| OpenBSD | ioctl | ✅ 支持 |
-| macOS | ioctl | ⚠️ 实验性支持 |
+| 平台 | IPv6 获取（接口） | IPv6 获取（HTTP API） | 状态 |
+|------|-------------------|----------------------|------|
+| Linux | ✅ netlink (`RTM_GETADDR`) | ✅ | ✅ 完整支持 |
+| FreeBSD | ✅ ioctl (`SIOCGIFALIFETIME_IN6`) | ✅ | ✅ 完整支持 |
+| OpenBSD | ❌ | ✅ | ⚠️ 仅支持 HTTP API 方式 |
+| macOS | ❌ | ✅ | ⚠️ 仅支持 HTTP API 方式 |
 
-所有平台均支持 HTTP API 降级方式获取 IPv6。
+> **注意**：由于缺乏测试环境，OpenBSD 和 macOS 的网卡接口读取 IPv6 功能暂时移除。
+> 如果你在这些平台上有测试条件，欢迎提交 PR 恢复支持！
 
 ---
 

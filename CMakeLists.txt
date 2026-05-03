@@ -71,10 +71,8 @@ set(SOURCES
 )
 
 # Platform-specific sources
-if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    # macOS uses the same BSD-style implementation
-    list(APPEND SOURCES src/ip_getter_bsd.cpp)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    # FreeBSD uses ioctl for IPv6 address retrieval
     list(APPEND SOURCES src/ip_getter_bsd.cpp)
 endif()
 
@@ -89,6 +87,7 @@ target_link_libraries(alasia PRIVATE
     OpenSSL::Crypto
     nlohmann_json::nlohmann_json
     argparse
+    pthread
 )
 
 # ─── Version info via compile definitions ──────────────────────────────────────
