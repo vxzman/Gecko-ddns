@@ -119,6 +119,12 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
     if (sock.get() < 0) {
         return std::unexpected(std::string("socket() failed: ") + strerror(errno));
     }
+    
+    // Set receive timeout (5 seconds)
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    setsockopt(sock.get(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     // Send RTM_GETADDR request
     struct {
@@ -142,6 +148,9 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
     while (true) {
         ssize_t len = recv(sock.get(), buf, sizeof(buf), 0);
         if (len < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return std::unexpected("netlink recv timeout");
+            }
             return std::unexpected(std::string("recv() failed: ") + strerror(errno));
         }
 
@@ -236,11 +245,11 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vecto
     if (urls.empty()) { return std::unexpected("No API URLs configured"); }
 
     for (const auto& url : urls) {
-        logger::info("Querying API: %s", url.c_str());
+        logger::info("Querying API: {}", url);
         std::string err;
         std::string ip = fetch_ip_from_url(url, err);
         if (!ip.empty()) {
-            logger::info("API %s succeeded: %s", url.c_str(), ip.c_str());
+            logger::info("API {} succeeded: {}", url, ip);
             IPv6Info info;
             info.ip            = ip;
             info.preferred_lft = config::INFINITE_LIFETIME_SECONDS; // treat as permanent
