@@ -205,16 +205,25 @@ static std::string get_current_ip(const config::Config& cfg) {
     return *ip_res;
 }
 
-static void check_and_log_cache(const std::string& current_ip, const std::string& cache_file, bool ignore_cache) {
-    std::string last_ip = cache::read_last_ip(cache_file);
+// Returns true if DDNS update should be skipped (IP unchanged and cache not ignored)
+static bool check_cache_and_decide_skip(const std::string& current_ip, const std::string& cache_file, bool ignore_cache) {
+    auto cache_data = cache::parse_cache_file(cache_file);
+    std::string last_ip = cache_data.last_ip;
 
-    if (!ignore_cache && !last_ip.empty()) {
+    if (ignore_cache) {
+        logger::info("Ignoring cache (--ignore), forcing DDNS update");
+        return false;
+    }
+
+    if (!last_ip.empty()) {
         if (last_ip == current_ip) {
-            logger::info("IP has not changed since last run: {}", current_ip);
+            logger::info("IP has not changed since last run: {} — skipping DDNS update", current_ip);
+            return true;
         } else {
             logger::info("IP changed from {} to {}", last_ip, current_ip);
         }
     }
+    return false;
 }
 
 static void update_records_parallel(
@@ -271,7 +280,9 @@ static void log_summary(int success_count, int fail_count) {
     logger::info("Update completed: {} succeeded, {} failed", success_count, fail_count);
 }
 
-static void update_cache(const std::string& cache_file, const std::string& current_ip, const std::string& last_ip) {
+static void update_cache(const std::string& cache_file, const std::string& current_ip, const std::string& last_ip, bool ignore_cache) {
+    // Only write cache if not in --ignore mode
+    if (ignore_cache) return;
     if (last_ip != current_ip) {
         if (!cache::write_last_ip(cache_file, current_ip)) {
             logger::warning("Warning: failed to write cache file");
@@ -334,7 +345,10 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
 
     // Cache
     std::string cache_file = config::get_cache_file_path(abs_config.string(), base_dir);
-    check_and_log_cache(current_ip, cache_file, ignore_cache);
+    if (check_cache_and_decide_skip(current_ip, cache_file, ignore_cache)) {
+        curl_pool::cleanup();
+        return 0;
+    }
 
     // Update records
     std::string zone_id_cache_file = config::get_zone_id_cache_path(abs_config.string());
@@ -345,7 +359,7 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
     // Update cache
     std::string last_ip = cache::read_last_ip(cache_file);
     if (success_count > 0) {
-        update_cache(cache_file, current_ip, last_ip);
+        update_cache(cache_file, current_ip, last_ip, ignore_cache);
     }
 
     curl_pool::cleanup();
@@ -364,8 +378,8 @@ int main(int argc, char* argv[]) {
     run_cmd_parser.add_argument("-d", "--dir")
         .help("工作目录（用于存放缓存和相对日志路径）")
         .default_value(std::string(""));
-    run_cmd_parser.add_argument("-i", "--ignore-cache")
-        .help("忽略缓存 IP，强制更新")
+    run_cmd_parser.add_argument("-i", "--ignore")
+        .help("忽略缓存，强制更新且不写入缓存")
         .default_value(false)
         .implicit_value(true);
     run_cmd_parser.add_argument("-t", "--timeout")
@@ -408,7 +422,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        bool ignore_cache = run_cmd_parser.get<bool>("--ignore-cache");
+        bool ignore_cache = run_cmd_parser.get<bool>("--ignore");
         int timeout = run_cmd_parser.get<int>("--timeout");
         return run_cmd(config_path, dir_path, ignore_cache, timeout);
     }

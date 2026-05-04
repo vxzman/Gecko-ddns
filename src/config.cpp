@@ -1,8 +1,10 @@
 #include "config.hpp"
+#include "cache.hpp"
 #include "log.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -308,23 +310,16 @@ std::string get_cache_file_path(const std::string& config_abs_path,
 }
 
 std::string read_last_ip(const std::string& path) {
-    std::ifstream f(path);
-    if (!f.is_open()) return "";
-    std::string ip;
-    std::getline(f, ip);
-    auto trim = [](std::string& s) {
-        while (!s.empty() && std::isspace((unsigned char)s.back()))  s.pop_back();
-        while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(s.begin());
-    };
-    trim(ip);
-    return ip;
+    return ::cache::parse_cache_file(path).last_ip;
 }
 
 bool write_last_ip(const std::string& path, const std::string& ip) {
-    std::ofstream f(path);
-    if (!f.is_open()) return false;
-    f << ip;
-    return f.good();
+    auto data = ::cache::parse_cache_file(path);
+    data.history.push_back({
+        std::chrono::system_clock::now(),
+        ip
+    });
+    return ::cache::write_cache_file(path, data);
 }
 
 // ─── Record helpers ───────────────────────────────────────────────────────────
