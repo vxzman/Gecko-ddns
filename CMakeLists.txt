@@ -6,7 +6,7 @@ if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
 endif()
 
-project(alasia VERSION 1.0.0 LANGUAGES CXX)
+project(gecko-ddns VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -71,18 +71,24 @@ set(SOURCES
 )
 
 # Platform-specific sources
-if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-    # FreeBSD uses ioctl for IPv6 address retrieval
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Linux uses raw Netlink socket for IPv6 address retrieval
+    list(APPEND SOURCES src/ip_getter_linux.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    # FreeBSD uses Netlink (SNL API, FreeBSD 14+) for IPv6 address retrieval
+    list(APPEND SOURCES src/ip_getter_freebsd.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+    # OpenBSD uses ioctl for IPv6 address retrieval
     list(APPEND SOURCES src/ip_getter_bsd.cpp)
 endif()
 
-add_executable(alasia ${SOURCES})
+add_executable(gecko-ddns ${SOURCES})
 
-target_include_directories(alasia PRIVATE
+target_include_directories(gecko-ddns PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(alasia PRIVATE
+target_link_libraries(gecko-ddns PRIVATE
     CURL::libcurl
     OpenSSL::Crypto
     nlohmann_json::nlohmann_json
@@ -97,7 +103,7 @@ set(APP_COMMIT  ""    CACHE STRING "Git commit hash")
 set(APP_BUILD_DATE "" CACHE STRING "Build date (UTC ISO 8601)")
 set(APP_COMPILER "" CACHE STRING "Compiler version string")
 
-target_compile_definitions(alasia PRIVATE
+target_compile_definitions(gecko-ddns PRIVATE
     APP_VERSION="${APP_VERSION}"
     APP_COMMIT="${APP_COMMIT}"
     APP_BUILD_DATE="${APP_BUILD_DATE}"
@@ -105,4 +111,4 @@ target_compile_definitions(alasia PRIVATE
 )
 
 # ─── Install ───────────────────────────────────────────────────────────────────
-install(TARGETS alasia DESTINATION bin)
+install(TARGETS gecko-ddns DESTINATION bin)

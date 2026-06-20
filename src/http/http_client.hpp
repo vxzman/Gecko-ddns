@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-namespace alasia::http {
+namespace gecko::http {
 
 /// HTTP response
 struct Response {
@@ -53,4 +53,4 @@ public:
 /// Create default HTTP client instance
 std::unique_ptr<HttpClient> create_default_client();
 
-} // namespace alasia::http
+} // namespace gecko::http

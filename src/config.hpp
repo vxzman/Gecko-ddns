@@ -1,6 +1,5 @@
 #pragma once
 #include <map>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,47 +26,35 @@ inline constexpr long INFINITE_LIFETIME_SECONDS = 1000000000000L; // 1e12
 
 struct IPSource {
     std::string              interface_name; ///< network interface (optional)
-    std::vector<std::string> urls;           ///< fallback HTTP API URLs
-};
-
-struct GeneralConfig {
-    IPSource    get_ip;
-    std::string proxy;       ///< global proxy (optional)
-};
-
-struct CloudflareRecord {
-    std::string api_token;
-    std::string zone_id;  ///< auto-fetched if empty
-    bool        proxied = false;
-    int         ttl     = 0; ///< 0 = use parent record's ttl
-};
-
-struct AliyunRecord {
-    std::string access_key_id;
-    std::string access_key_secret;
-    int         ttl = 0;
+    std::vector<std::string> fallback_urls;  ///< fallback HTTP API URLs
 };
 
 struct RecordConfig {
-    std::string                      provider;
-    std::string                      zone;
-    std::string                      record;
-    int                              ttl       = 0;
-    bool                             proxied   = false;
-    bool                             use_proxy = false;
-    std::optional<CloudflareRecord>  cloudflare;
-    std::optional<AliyunRecord>      aliyun;
+    std::string provider;
+    std::string zone;
+    std::string name;         ///< record name / subdomain
+    std::string type;         ///< "AAAA" (default) or "A"
+    int         ttl       = 0;
+    bool        proxied   = false; ///< Cloudflare CDN proxy only
+    bool        use_proxy = false;
 
-    // Raw values before environment variable expansion (for security validation)
-    std::string _raw_cloudflare_api_token;
-    std::string _raw_cloudflare_zone_id;
-    std::string _raw_aliyun_access_key_id;
-    std::string _raw_aliyun_access_key_secret;
+    // Provider-specific fields (flat — validated at runtime by provider)
+    std::string api_token;          ///< Cloudflare
+    std::string zone_id;            ///< Cloudflare (auto-fetched if empty)
+    std::string access_key_id;      ///< Aliyun
+    std::string access_key_secret;  ///< Aliyun
+
+    // Raw values before environment variable expansion (for security logging)
+    std::string _raw_api_token;
+    std::string _raw_zone_id;
+    std::string _raw_access_key_id;
+    std::string _raw_access_key_secret;
 };
 
 struct Config {
-    std::map<std::string, std::string> environment;  ///< Environment variables
-    GeneralConfig                      general;
+    std::map<std::string, std::string> environment; ///< Environment variables (from "env")
+    IPSource                           ip_source;
+    std::string                        proxy;       ///< global proxy for DNS API
     std::vector<RecordConfig>          records;
 };
 

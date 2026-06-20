@@ -9,7 +9,7 @@
 
 using json = nlohmann::json;
 
-namespace alasia::services {
+namespace gecko::services {
 
 CloudflareDnsProvider::CloudflareDnsProvider(std::string api_token, std::string proxy_url)
     : api_token_(std::move(api_token)),
@@ -215,4 +215,4 @@ Result<void> CloudflareDnsProvider::upsert_record_with_zone_id(const std::string
     }
 }
 
-} // namespace alasia::services
+} // namespace gecko::services

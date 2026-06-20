@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-namespace alasia::services {
+namespace gecko::services {
 
 /// Cloudflare DNS provider implementation
 class CloudflareDnsProvider : public DnsProvider {
@@ -47,4 +47,4 @@ private:
     std::unique_ptr<http::HttpClient> http_client_;
 };
 
-} // namespace alasia::services
+} // namespace gecko::services

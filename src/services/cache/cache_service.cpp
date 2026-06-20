@@ -10,7 +10,7 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-namespace alasia::cache {
+namespace gecko::cache {
 
 // ─── FileCacheService Implementation ─────────────────────────────────────────
 
@@ -179,4 +179,4 @@ bool update_zone_id_cache(const std::string& path, const std::string& zone, cons
     return true;
 }
 
-} // namespace alasia::cache
+} // namespace gecko::cache

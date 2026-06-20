@@ -15,7 +15,7 @@
 #include <thread>
 
 namespace fs = std::filesystem;
-namespace alasia::commands {
+namespace gecko::commands {
 
 namespace {
 
@@ -57,32 +57,30 @@ Result<void> update_single_record(const RecordUpdateTask& task,
     
     // Handle Cloudflare-specific parameters
     if (task.record.provider == "cloudflare") {
-        if (task.record.cloudflare) {
-            // Load zone_id from cache if not configured
-            std::string zone_id = task.record.cloudflare->zone_id;
-            if (zone_id.empty()) {
-                auto cached = cache::read_zone_id_cache(task.zone_id_cache_file);
-                auto it = cached.find(task.record.zone);
-                if (it != cached.end() && !it->second.empty()) {
-                    zone_id = it->second;
-                    logger::debug("Zone ID loaded from cache for {}: {}", task.record.zone, zone_id);
-                }
+        // Load zone_id from cache if not configured
+        std::string zone_id = task.record.zone_id;
+        if (zone_id.empty()) {
+            auto cached = cache::read_zone_id_cache(task.zone_id_cache_file);
+            auto it = cached.find(task.record.zone);
+            if (it != cached.end() && !it->second.empty()) {
+                zone_id = it->second;
+                logger::debug("Zone ID loaded from cache for {}: {}", task.record.zone, zone_id);
             }
-            
-            // Fetch zone_id if still empty
-            if (zone_id.empty()) {
-                logger::info("Zone ID not configured, fetching for zone: {}", task.record.zone);
-                
-                // Need to get zone_id from provider
-                // This requires casting to CloudflareDnsProvider - TODO: improve this
-                // For now, we'll handle it in a simplified way
-            }
-            
-            extra["zone_id"] = zone_id;
-            extra["proxied"] = (task.record.cloudflare->proxied || task.record.proxied) ? "true" : "false";
         }
+
+        // Fetch zone_id if still empty
+        if (zone_id.empty()) {
+            logger::info("Zone ID not configured, fetching for zone: {}", task.record.zone);
+
+            // Need to get zone_id from provider
+            // This requires casting to CloudflareDnsProvider - TODO: improve this
+            // For now, we'll handle it in a simplified way
+        }
+
+        extra["zone_id"] = zone_id;
+        extra["proxied"] = task.record.proxied ? "true" : "false";
     }
-    
+
     // Get effective TTL
     int ttl = config::get_record_ttl(task.record);
     
@@ -131,12 +129,12 @@ Result<int> RunCommand::execute(const CommandContext& ctx) {
         return Result<int>::error("Failed to initialize logger");
     }
     
-    logger::info("alasia starting with {} record(s)", cfg.records.size());
+    logger::info("gecko-ddns starting with {} record(s)", cfg.records.size());
     
     // Create IP service
     services::IpServiceConfig ip_config;
-    ip_config.interface_name = cfg.general.get_ip.interface_name;
-    ip_config.api_urls = cfg.general.get_ip.urls;
+    ip_config.interface_name = cfg.ip_source.interface_name;
+    ip_config.api_urls = cfg.ip_source.fallback_urls;
     
     auto ip_service_result = services::create_ip_service(ip_config);
     if (ip_service_result.is_error()) {
@@ -178,7 +176,7 @@ Result<int> RunCommand::execute(const CommandContext& ctx) {
         threads.emplace_back([&, i]() {
             // Check shutdown and timeout before starting
             if (g_shutdown_requested || g_timeout_reached.load()) {
-                results[i] = {cfg.records[i].record + "." + cfg.records[i].zone, false, "shutdown requested"};
+                results[i] = {cfg.records[i].name + "." + cfg.records[i].zone, false, "shutdown requested"};
                 return;
             }
             
@@ -248,7 +246,7 @@ Result<int> RunCommand::execute(const CommandContext& ctx) {
 }
 
 Result<int> VersionCommand::execute(const CommandContext& /*ctx*/) {
-    std::cout << "alasia " APP_VERSION << "\n";
+    std::cout << "gecko-ddns " APP_VERSION << "\n";
     if (std::string(APP_COMMIT).size() > 0) {
         std::cout << "commit: " APP_COMMIT << "\n";
     }
@@ -281,4 +279,4 @@ std::vector<std::string> CommandRegistry::get_command_names() const {
     return names;
 }
 
-} // namespace alasia::commands
+} // namespace gecko::commands

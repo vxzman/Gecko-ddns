@@ -1,4 +1,4 @@
-# Alasia 代码质量分析与改进建议
+# Gecko-ddns 代码质量分析与改进建议
 
 ## 📊 代码质量分析报告
 
@@ -170,7 +170,7 @@ class ProviderFactory {
 
 #### 4. **无配置验证命令**
 - 只能运行时报错
-- 应支持 `alasia validate -f config.json`
+- 应支持 `gecko-ddns validate -f config.json`
 - **建议**: 添加 `validate` 子命令
 
 ---

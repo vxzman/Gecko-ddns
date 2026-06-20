@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-namespace alasia::services {
+namespace gecko::services {
 
 /// Aliyun DNS provider implementation
 class AliyunDnsProvider : public DnsProvider {
@@ -39,4 +39,4 @@ private:
     std::unique_ptr<http::HttpClient> http_client_;
 };
 
-} // namespace alasia::services
+} // namespace gecko::services

@@ -13,7 +13,7 @@
 
 using json = nlohmann::json;
 
-namespace alasia::services {
+namespace gecko::services {
 
 AliyunDnsProvider::AliyunDnsProvider(std::string access_key_id, std::string access_key_secret)
     : access_key_id_(std::move(access_key_id)),
@@ -229,4 +229,4 @@ Result<void> AliyunDnsProvider::upsert_record(const std::string& zone,
     }
 }
 
-} // namespace alasia::services
+} // namespace gecko::services

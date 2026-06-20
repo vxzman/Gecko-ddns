@@ -6,7 +6,7 @@
 #include <memory>
 #include <string>
 
-namespace alasia::services {
+namespace gecko::services {
 
 /// DNS provider factory - creates appropriate provider based on configuration
 class DnsProviderFactory {
@@ -17,4 +17,4 @@ public:
         const config::RecordConfig& record_config);
 };
 
-} // namespace alasia::services
+} // namespace gecko::services

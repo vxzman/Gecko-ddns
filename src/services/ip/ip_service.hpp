@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace alasia::services {
+namespace gecko::services {
 
 /// IP service interface - abstracts IP acquisition from interfaces or APIs
 class IpService {
@@ -30,4 +30,4 @@ struct IpServiceConfig {
 /// Create default IP service instance
 Result<std::unique_ptr<IpService>> create_ip_service(const IpServiceConfig& config);
 
-} // namespace alasia::services
+} // namespace gecko::services

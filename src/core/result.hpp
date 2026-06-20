@@ -4,7 +4,7 @@
 #include <variant>
 #include <utility>
 
-namespace alasia {
+namespace gecko {
 
 /// Error type for Result
 struct Error {
@@ -101,4 +101,4 @@ private:
     Error error_;
 };
 
-} // namespace alasia
+} // namespace gecko
