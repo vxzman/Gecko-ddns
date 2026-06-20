@@ -122,12 +122,8 @@ static UpdateResult update_aliyun_record(
     logger::info("Processing record: {} ({})", result.record_name, rec.provider);
 
     std::string proxy_url = config::get_record_proxy(cfg, rec);
-    if (!proxy_url.empty()) {
-        logger::warning("Aliyun provider does not support proxy, ignoring use_proxy setting");
-    }
-
     int ttl = config::get_record_ttl(rec);
-    auto provider = provider::AliyunProvider(rec.access_key_id, rec.access_key_secret);
+    auto provider = provider::AliyunProvider(rec.access_key_id, rec.access_key_secret, proxy_url);
     std::map<std::string, std::string> extra;
 
     auto ok = provider.upsert_record(rec.zone, rec.name, current_ip, ttl, extra);

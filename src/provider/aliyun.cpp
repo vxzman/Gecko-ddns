@@ -29,9 +29,10 @@ static size_t write_cb(char* ptr, size_t sz, size_t nmemb, void* ud) {
 
 } // anonymous namespace
 
-AliyunProvider::AliyunProvider(std::string access_key_id, std::string access_key_secret)
+AliyunProvider::AliyunProvider(std::string access_key_id, std::string access_key_secret, std::string proxy_url)
     : access_key_id_(std::move(access_key_id)),
-      access_key_secret_(std::move(access_key_secret)) {}
+      access_key_secret_(std::move(access_key_secret)),
+      proxy_url_(std::move(proxy_url)) {}
 
 // ─── HMAC-SHA1 Base64 ─────────────────────────────────────────────────────────
 
@@ -148,6 +149,10 @@ auto AliyunProvider::sign_and_request(
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+
+        if (!proxy_url_.empty()) {
+            curl_easy_setopt(curl, CURLOPT_PROXY, proxy_url_.c_str());
+        }
 
         CURLcode res = curl_easy_perform(curl);
         long code = 0;

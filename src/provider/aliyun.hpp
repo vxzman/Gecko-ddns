@@ -7,7 +7,7 @@ namespace provider {
 
 class AliyunProvider : public DNSProvider {
 public:
-    AliyunProvider(std::string access_key_id, std::string access_key_secret);
+    AliyunProvider(std::string access_key_id, std::string access_key_secret, std::string proxy_url = "");
 
     std::string name() const override { return "aliyun"; }
 
@@ -20,6 +20,7 @@ public:
 private:
     std::string access_key_id_;
     std::string access_key_secret_;
+    std::string proxy_url_;
 
     std::expected<std::string, std::string> get_record_id(const std::string& full_domain);
 
