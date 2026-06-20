@@ -114,7 +114,7 @@ cp config.example.json config.json
 |--|------------|--------|
 | **认证** | API Token | AccessKey ID + Secret |
 | **权限** | `Zone:DNS:Edit` | `AliyunDNSFullAccess` |
-| **代理** | ✅ HTTP/SOCKS5 | ❌ 不支持 |
+| **代理** | ✅ HTTP/SOCKS5 | ✅ HTTP/SOCKS5 |
 | **Zone ID** | 留空自动获取 | — |
 
 ## 命令行
