@@ -6,7 +6,7 @@
 #include <thread>
 #include <curl/curl.h>
 
-namespace alasia::http {
+namespace gecko::http {
 
 namespace {
 
@@ -142,4 +142,4 @@ std::unique_ptr<HttpClient> create_default_client() {
     return std::make_unique<DefaultHttpClient>();
 }
 
-} // namespace alasia::http
+} // namespace gecko::http

@@ -1,19 +1,19 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-VERSION="${1:-dev}"
+VERSION="${1:-2.0}"
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Default compiler by platform
-if [[ "$(uname -s)" == "Linux" ]]; then
+if [ "$(uname -s)" = "Linux" ]; then
     : "${CXX_COMPILER:=g++}"
 else
     : "${CXX_COMPILER:=clang++}"
 fi
 
 # Validate compiler exists
-if ! command -v "$CXX_COMPILER" &> /dev/null; then
+if ! command -v "$CXX_COMPILER" > /dev/null 2>&1; then
     echo "Error: Compiler '$CXX_COMPILER' not found"
     exit 1
 fi
@@ -21,7 +21,7 @@ fi
 # Get compiler version
 CXX_VERSION=$("$CXX_COMPILER" --version 2>/dev/null | head -n1 || echo "unknown")
 
-echo "Building alasia ${VERSION} ..."
+echo "Building gecko-ddns ${VERSION} ..."
 echo "Compiler: ${CXX_COMPILER} (${CXX_VERSION})"
 
 # Clean build directory if compiler changes to avoid cache issues
@@ -41,9 +41,9 @@ cmake -B build \
     -DAPP_BUILD_DATE="${BUILD_DATE}" \
     -DAPP_COMPILER="${CXX_VERSION}"
 
-if command -v nproc &> /dev/null; then
+if command -v nproc > /dev/null 2>&1; then
     JOBS=$(nproc)
-elif sysctl -n hw.ncpu &> /dev/null 2>&1; then
+elif sysctl -n hw.ncpu > /dev/null 2>&1; then
     JOBS=$(sysctl -n hw.ncpu)
 else
     JOBS=1
@@ -51,4 +51,4 @@ fi
 
 cmake --build build -j"${JOBS}"
 
-echo "Build successful: $(pwd)/build/alasia"
+echo "Build successful: $(pwd)/build/gecko-ddns"

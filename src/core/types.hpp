@@ -3,7 +3,7 @@
 #include <string>
 #include <cstdint>
 
-namespace alasia {
+namespace gecko {
 
 // Version information
 #ifndef APP_VERSION
@@ -54,4 +54,4 @@ struct UpdateResult {
     std::string error;
 };
 
-} // namespace alasia
+} // namespace gecko

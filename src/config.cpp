@@ -43,12 +43,12 @@ static std::string resolve_env_var(const std::string& expr, const std::map<std::
     if (expr.empty() || expr[0] != '$') {
         return expr;
     }
-    
+
     std::string name = expr.substr(1);
     if (name.empty()) {
         return expr;
     }
-    
+
     auto it = environment.find(name);
     if (it != environment.end()) {
         return it->second;
@@ -68,23 +68,6 @@ static bool validate_proxy_url(const std::string& proxy) {
            lower.rfind("socks5h://", 0) == 0;
 }
 
-static bool validate_general_config(const GeneralConfig& general) {
-    bool has_iface = !general.get_ip.interface_name.empty();
-    bool has_urls  = !general.get_ip.urls.empty();
-    
-    if (!has_iface && !has_urls) {
-        logger::error("Config: either 'get_ip.interface' or 'get_ip.urls' must be set");
-        return false;
-    }
-
-    if (!general.proxy.empty() && !validate_proxy_url(general.proxy)) {
-        logger::error("Config: invalid global proxy format '{}'", general.proxy);
-        return false;
-    }
-
-    return true;
-}
-
 static bool validate_record(const RecordConfig& r, size_t index, const std::string& global_proxy) {
     if (r.provider.empty()) {
         logger::error("Config: record[{}]: provider is required", index);
@@ -94,35 +77,27 @@ static bool validate_record(const RecordConfig& r, size_t index, const std::stri
         logger::error("Config: record[{}]: zone is required", index);
         return false;
     }
-    if (r.record.empty()) {
+    if (r.name.empty()) {
         logger::error("Config: record[{}]: record name is required", index);
         return false;
     }
     if (r.use_proxy && global_proxy.empty()) {
-        logger::error("Config: record[{}]: use_proxy=true but no global proxy set", index);
+        logger::error("Config: record[{}]: use_proxy=true but no global 'proxy' set", index);
         return false;
     }
 
     if (r.provider == "cloudflare") {
-        if (!r.cloudflare) {
-            logger::error("Config: record[{}]: cloudflare configuration is missing", index);
-            return false;
-        }
-        if (r.cloudflare->api_token.empty()) {
-            logger::error("Config: record[{}]: cloudflare.api_token is not set or empty", index);
+        if (r.api_token.empty()) {
+            logger::error("Config: record[{}]: cloudflare 'api_token' is not set", index);
             return false;
         }
     } else if (r.provider == "aliyun") {
-        if (!r.aliyun) {
-            logger::error("Config: record[{}]: aliyun configuration is missing", index);
+        if (r.access_key_id.empty()) {
+            logger::error("Config: record[{}]: aliyun 'access_key_id' is not set", index);
             return false;
         }
-        if (r.aliyun->access_key_id.empty()) {
-            logger::error("Config: record[{}]: aliyun.access_key_id is not set or empty", index);
-            return false;
-        }
-        if (r.aliyun->access_key_secret.empty()) {
-            logger::error("Config: record[{}]: aliyun.access_key_secret is not set or empty", index);
+        if (r.access_key_secret.empty()) {
+            logger::error("Config: record[{}]: aliyun 'access_key_secret' is not set", index);
             return false;
         }
     } else {
@@ -147,8 +122,12 @@ static bool validate_config(const Config& cfg) {
         return false;
     }
 
-    return validate_general_config(cfg.general) &&
-           validate_all_records(cfg.records, cfg.general.proxy);
+    if (!cfg.proxy.empty() && !validate_proxy_url(cfg.proxy)) {
+        logger::error("Config: invalid global 'proxy' format '{}'", cfg.proxy);
+        return false;
+    }
+
+    return validate_all_records(cfg.records, cfg.proxy);
 }
 
 // ─── Parse ────────────────────────────────────────────────────────────────────
@@ -177,30 +156,28 @@ std::optional<Config> read_config(const std::string& path) {
 
     Config cfg;
 
-    // environment
-    if (root.contains("environment") && root["environment"].is_object()) {
-        for (const auto& [key, value] : root["environment"].items()) {
+    // env
+    if (root.contains("env") && root["env"].is_object()) {
+        for (const auto& [key, value] : root["env"].items()) {
             if (value.is_string()) {
                 cfg.environment[key] = value.get<std::string>();
             }
         }
     }
 
-    // general
-    if (root.contains("general")) {
-        const auto& g = root["general"];
-        cfg.general.proxy      = jstr(g, "proxy");
-
-        if (g.contains("get_ip")) {
-            const auto& gi = g["get_ip"];
-            cfg.general.get_ip.interface_name = jstr(gi, "interface");
-            if (gi.contains("urls") && gi["urls"].is_array()) {
-                for (const auto& u : gi["urls"]) {
-                    if (u.is_string()) cfg.general.get_ip.urls.push_back(u.get<std::string>());
-                }
+    // ip_source
+    if (root.contains("ip_source")) {
+        const auto& is = root["ip_source"];
+        cfg.ip_source.interface_name = jstr(is, "interface");
+        if (is.contains("fallback_urls") && is["fallback_urls"].is_array()) {
+            for (const auto& u : is["fallback_urls"]) {
+                if (u.is_string()) cfg.ip_source.fallback_urls.push_back(u.get<std::string>());
             }
         }
     }
+
+    // proxy (top-level)
+    cfg.proxy = jstr(root, "proxy");
 
     // records
     if (root.contains("records") && root["records"].is_array()) {
@@ -208,34 +185,32 @@ std::optional<Config> read_config(const std::string& path) {
             RecordConfig r;
             r.provider  = jstr(rj, "provider");
             r.zone      = jstr(rj, "zone");
-            r.record    = jstr(rj, "record");
+            r.name      = jstr(rj, "name");
+            r.type      = jstr(rj, "type", "AAAA");
             r.ttl       = jint(rj, "ttl");
             r.proxied   = jbool(rj, "proxied");
             r.use_proxy = jbool(rj, "use_proxy");
 
-            if (rj.contains("cloudflare") && rj["cloudflare"].is_object()) {
-                const auto& cj = rj["cloudflare"];
-                CloudflareRecord cr;
-                std::string api_token = jstr(cj, "api_token");
-                std::string zone_id   = jstr(cj, "zone_id");
-                // Resolve $name references
-                cr.api_token = resolve_env_var(api_token, cfg.environment);
-                cr.zone_id   = resolve_env_var(zone_id, cfg.environment);
-                cr.proxied   = jbool(cj, "proxied");
-                cr.ttl       = jint(cj, "ttl");
-                r.cloudflare = cr;
+            // Flat provider fields (resolve $name references)
+            {
+                std::string raw = jstr(rj, "api_token");
+                r._raw_api_token = raw;
+                r.api_token = resolve_env_var(raw, cfg.environment);
             }
-
-            if (rj.contains("aliyun") && rj["aliyun"].is_object()) {
-                const auto& aj = rj["aliyun"];
-                AliyunRecord ar;
-                std::string access_key_id     = jstr(aj, "access_key_id");
-                std::string access_key_secret = jstr(aj, "access_key_secret");
-                // Resolve $name references
-                ar.access_key_id     = resolve_env_var(access_key_id, cfg.environment);
-                ar.access_key_secret = resolve_env_var(access_key_secret, cfg.environment);
-                ar.ttl               = jint(aj, "ttl");
-                r.aliyun = ar;
+            {
+                std::string raw = jstr(rj, "zone_id");
+                r._raw_zone_id = raw;
+                r.zone_id = resolve_env_var(raw, cfg.environment);
+            }
+            {
+                std::string raw = jstr(rj, "access_key_id");
+                r._raw_access_key_id = raw;
+                r.access_key_id = resolve_env_var(raw, cfg.environment);
+            }
+            {
+                std::string raw = jstr(rj, "access_key_secret");
+                r._raw_access_key_secret = raw;
+                r.access_key_secret = resolve_env_var(raw, cfg.environment);
             }
 
             cfg.records.push_back(std::move(r));
@@ -251,17 +226,19 @@ std::optional<Config> read_config(const std::string& path) {
 
 bool write_config(const std::string& path, const Config& cfg) {
     json root;
-    
-    // environment
-    root["environment"] = json::object();
+
+    // env
+    root["env"] = json::object();
     for (const auto& [key, value] : cfg.environment) {
-        root["environment"][key] = value;
+        root["env"][key] = value;
     }
-    
-    // general
-    root["general"]["proxy"]      = cfg.general.proxy;
-    root["general"]["get_ip"]["interface"] = cfg.general.get_ip.interface_name;
-    root["general"]["get_ip"]["urls"]      = cfg.general.get_ip.urls;
+
+    // ip_source
+    root["ip_source"]["interface"]     = cfg.ip_source.interface_name;
+    root["ip_source"]["fallback_urls"] = cfg.ip_source.fallback_urls;
+
+    // proxy (top-level)
+    root["proxy"] = cfg.proxy;
 
     // records
     root["records"] = json::array();
@@ -269,22 +246,17 @@ bool write_config(const std::string& path, const Config& cfg) {
         json rj;
         rj["provider"]  = r.provider;
         rj["zone"]      = r.zone;
-        rj["record"]    = r.record;
+        rj["name"]      = r.name;
+        rj["type"]      = r.type;
         rj["ttl"]       = r.ttl;
         rj["proxied"]   = r.proxied;
         rj["use_proxy"] = r.use_proxy;
 
-        if (r.cloudflare) {
-            rj["cloudflare"]["api_token"] = r.cloudflare->api_token;
-            rj["cloudflare"]["zone_id"]   = r.cloudflare->zone_id;
-            rj["cloudflare"]["proxied"]   = r.cloudflare->proxied;
-            rj["cloudflare"]["ttl"]       = r.cloudflare->ttl;
-        }
-        if (r.aliyun) {
-            rj["aliyun"]["access_key_id"]     = r.aliyun->access_key_id;
-            rj["aliyun"]["access_key_secret"] = r.aliyun->access_key_secret;
-            rj["aliyun"]["ttl"]               = r.aliyun->ttl;
-        }
+        if (!r.api_token.empty())         rj["api_token"]         = r.api_token;
+        if (!r.zone_id.empty())           rj["zone_id"]           = r.zone_id;
+        if (!r.access_key_id.empty())     rj["access_key_id"]     = r.access_key_id;
+        if (!r.access_key_secret.empty()) rj["access_key_secret"] = r.access_key_secret;
+
         root["records"].push_back(std::move(rj));
     }
 
@@ -326,7 +298,7 @@ bool write_last_ip(const std::string& path, const std::string& ip) {
 
 std::string get_record_proxy(const Config& cfg, const RecordConfig& record) {
     if (!record.use_proxy) return "";
-    return cfg.general.proxy;
+    return cfg.proxy;
 }
 
 int get_record_ttl(const RecordConfig& record) {

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace alasia::commands {
+namespace gecko::commands {
 
 /// Command execution context
 struct CommandContext {
@@ -61,4 +61,4 @@ private:
     std::map<std::string, std::unique_ptr<Command>> commands_;
 };
 
-} // namespace alasia::commands
+} // namespace gecko::commands

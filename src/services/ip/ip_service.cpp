@@ -25,7 +25,7 @@
 // HTTP client for API fallback
 #include "http/http_client.hpp"
 
-namespace alasia::services {
+namespace gecko::services {
 
 namespace {
 
@@ -284,4 +284,4 @@ Result<std::unique_ptr<IpService>> create_ip_service(const IpServiceConfig& conf
         std::make_unique<DefaultIpService>(config));
 }
 
-} // namespace alasia::services
+} // namespace gecko::services

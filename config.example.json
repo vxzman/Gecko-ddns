@@ -1,44 +1,40 @@
 {
-    "environment": {
+    "env": {
         "cf_token": "your_cloudflare_api_token_here",
         "cf_zone": "your_cloudflare_zone_id_here",
         "ak_id": "your_aliyun_access_key_id_here",
         "ak_secret": "your_aliyun_access_key_secret_here"
     },
-    "general": {
-        "get_ip": {
-            "interface": "eth0",
-            "urls": [
-                "https://ipv6.icanhazip.com",
-                "https://6.ipw.cn",
-                "https://v6.ipv6-test.com/api/myip.php"
-            ]
-        },
-        "proxy": ""
+    "ip_source": {
+        "interface": "eth0",
+        "fallback_urls": [
+            "https://ipv6.icanhazip.com",
+            "https://6.ipw.cn",
+            "https://v6.ipv6-test.com/api/myip.php"
+        ]
     },
+    "proxy": "",
     "records": [
         {
             "provider": "cloudflare",
             "zone": "example.com",
-            "record": "dev",
+            "name": "www",
+            "type": "AAAA",
             "ttl": 300,
             "proxied": false,
             "use_proxy": false,
-            "cloudflare": {
-                "api_token": "$cf_token",
-                "zone_id": "$cf_zone"
-            }
+            "api_token": "$cf_token",
+            "zone_id": "$cf_zone"
         },
         {
             "provider": "aliyun",
             "zone": "example.cn",
-            "record": "www",
+            "name": "www",
+            "type": "AAAA",
             "ttl": 600,
             "use_proxy": false,
-            "aliyun": {
-                "access_key_id": "$ak_id",
-                "access_key_secret": "$ak_secret"
-            }
+            "access_key_id": "$ak_id",
+            "access_key_secret": "$ak_secret"
         }
     ]
 }

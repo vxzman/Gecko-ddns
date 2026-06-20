@@ -34,7 +34,7 @@ static void signal_handler(int) { g_shutdown_requested = 1; }
 static bool is_shutdown_requested() { return g_shutdown_requested != 0; }
 
 static void print_version() {
-    std::cout << "alasia " APP_VERSION "\n";
+    std::cout << "gecko-ddns " APP_VERSION "\n";
     if (std::string(APP_COMMIT).size() > 0)
         std::cout << "commit: " APP_COMMIT "\n";
     if (std::string(APP_BUILD_DATE).size() > 0)
@@ -58,24 +58,18 @@ static UpdateResult update_cloudflare_record(
     const config::RecordConfig& rec,
     const std::string&          current_ip,
     const std::string&          zone_id_cache_file) {
-    
+
     UpdateResult result;
-    result.record_name = rec.record + "." + rec.zone;
+    result.record_name = rec.name + "." + rec.zone;
 
     logger::info("Processing record: {} ({})", result.record_name, rec.provider);
 
-    if (!rec.cloudflare) {
-        result.error = "missing cloudflare config";
-        logger::error("Record {}: {}", result.record_name, result.error);
-        return result;
-    }
-
     std::string proxy_url = config::get_record_proxy(cfg, rec);
-    auto provider = provider::CloudflareProvider(rec.cloudflare->api_token, proxy_url);
-    std::string zone_id = rec.cloudflare->zone_id;
+    auto provider = provider::CloudflareProvider(rec.api_token, proxy_url);
+    std::string zone_id = rec.zone_id;
 
-    int ttl = rec.cloudflare->ttl > 0 ? rec.cloudflare->ttl : config::get_record_ttl(rec);
-    bool proxied = rec.proxied || rec.cloudflare->proxied;
+    int ttl = config::get_record_ttl(rec);
+    bool proxied = rec.proxied;
 
     // Auto-fetch zone_id if not set (try cache first)
     if (zone_id.empty()) {
@@ -103,7 +97,7 @@ static UpdateResult update_cloudflare_record(
         }
     }
 
-    auto ok = provider.upsert_record_with_zone_id(rec.zone, rec.record, current_ip, zone_id, ttl, proxied);
+    auto ok = provider.upsert_record_with_zone_id(rec.zone, rec.name, current_ip, zone_id, ttl, proxied);
     if (!ok) {
         result.error = "Cloudflare upsert failed: " + ok.error();
         logger::error("Failed to update {}", result.record_name);
@@ -121,28 +115,22 @@ static UpdateResult update_aliyun_record(
     const config::Config&       cfg,
     const config::RecordConfig& rec,
     const std::string&          current_ip) {
-    
+
     UpdateResult result;
-    result.record_name = rec.record + "." + rec.zone;
+    result.record_name = rec.name + "." + rec.zone;
 
     logger::info("Processing record: {} ({})", result.record_name, rec.provider);
-
-    if (!rec.aliyun) {
-        result.error = "missing aliyun config";
-        logger::error("Record {}: {}", result.record_name, result.error);
-        return result;
-    }
 
     std::string proxy_url = config::get_record_proxy(cfg, rec);
     if (!proxy_url.empty()) {
         logger::warning("Aliyun provider does not support proxy, ignoring use_proxy setting");
     }
 
-    int ttl = rec.aliyun->ttl > 0 ? rec.aliyun->ttl : config::get_record_ttl(rec);
-    auto provider = provider::AliyunProvider(rec.aliyun->access_key_id, rec.aliyun->access_key_secret);
+    int ttl = config::get_record_ttl(rec);
+    auto provider = provider::AliyunProvider(rec.access_key_id, rec.access_key_secret);
     std::map<std::string, std::string> extra;
-    
-    auto ok = provider.upsert_record(rec.zone, rec.record, current_ip, ttl, extra);
+
+    auto ok = provider.upsert_record(rec.zone, rec.name, current_ip, ttl, extra);
     if (!ok) {
         result.error = "Aliyun upsert failed: " + ok.error();
         logger::error("Failed to update {}", result.record_name);
@@ -162,9 +150,9 @@ static UpdateResult update_single_record(
     const std::string&          current_ip,
     const std::string&          zone_id_cache_file,
     const std::atomic<bool>&    timed_out) {
-    
+
     UpdateResult result;
-    result.record_name = rec.record + "." + rec.zone;
+    result.record_name = rec.name + "." + rec.zone;
 
     if (timed_out.load() || is_shutdown_requested()) {
         result.error = "shutdown requested";
@@ -185,13 +173,13 @@ static UpdateResult update_single_record(
 // ─── Helper Functions ──────────────────────────────────────────────────────────
 
 static std::string get_current_ip(const config::Config& cfg) {
-    auto infos_res = cfg.general.get_ip.interface_name.empty()
-        ? ip_getter::get_from_apis(cfg.general.get_ip.urls)
-        : ip_getter::get_from_interface(cfg.general.get_ip.interface_name);
+    auto infos_res = cfg.ip_source.interface_name.empty()
+        ? ip_getter::get_from_apis(cfg.ip_source.fallback_urls)
+        : ip_getter::get_from_interface(cfg.ip_source.interface_name);
 
     if (!infos_res) {
         logger::info("Primary IP source failed: {}. Trying API fallback...", infos_res.error());
-        infos_res = ip_getter::get_from_apis(cfg.general.get_ip.urls);
+        infos_res = ip_getter::get_from_apis(cfg.ip_source.fallback_urls);
     }
 
     if (!infos_res) {
@@ -247,23 +235,23 @@ static void update_records_parallel(
     }
 
     auto start = std::chrono::steady_clock::now();
-    
+
     // Join all threads, but stop waiting after timeout or shutdown
     for (auto& t : threads) {
         if (timed_out.load() || is_shutdown_requested()) {
             break;
         }
-        
+
         auto elapsed = std::chrono::steady_clock::now() - start;
         if (elapsed >= std::chrono::seconds(timeout_sec)) {
             timed_out.store(true);
             logger::warning("Timeout reached ({} seconds), forcing shutdown", timeout_sec);
             break;
         }
-        
+
         t.join();
     }
-    
+
     // Join any remaining threads (they should exit quickly after timed_out is set)
     for (auto& t : threads) {
         if (t.joinable()) {
@@ -332,7 +320,7 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
         return 1;
     }
 
-    logger::info("alasia starting with {} record(s)", cfg.records.size());
+    logger::info("gecko-ddns starting with {} record(s)", cfg.records.size());
 
     // Get current IP
     std::string current_ip = get_current_ip(cfg);
@@ -367,7 +355,7 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
 }
 
 int main(int argc, char* argv[]) {
-    argparse::ArgumentParser program("alasia", APP_VERSION);
+    argparse::ArgumentParser program("gecko-ddns", APP_VERSION);
     program.add_description("强大的动态 DNS 客户端 - 支持多域名多服务商");
 
     argparse::ArgumentParser run_cmd_parser("run");

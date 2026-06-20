@@ -11,7 +11,7 @@
 #include <sstream>
 #include <iomanip>
 
-namespace alasia::logger {
+namespace gecko::logger {
 
 namespace {
 
@@ -115,4 +115,4 @@ inline void debug(std::string_view format, Args&&... args) {
 #endif
 }
 
-} // namespace alasia::logger
+} // namespace gecko::logger

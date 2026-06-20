@@ -4,7 +4,7 @@
 #include <map>
 #include <string>
 
-namespace alasia::cache {
+namespace gecko::cache {
 
 /// Cache service interface
 class CacheService {
@@ -57,4 +57,4 @@ std::string get_cache_file_path(const std::string& config_abs_path, const std::s
 /// Get ZoneID cache file path
 std::string get_zone_id_cache_path(const std::string& config_abs_path);
 
-} // namespace alasia::cache
+} // namespace gecko::cache

@@ -17,7 +17,7 @@ namespace fs = std::filesystem;
 #  define APP_BUILD_DATE ""
 #endif
 
-namespace alasia {
+namespace gecko {
 
 /// Initialize and register built-in commands
 void register_builtin_commands(commands::CommandRegistry& registry) {
@@ -25,10 +25,10 @@ void register_builtin_commands(commands::CommandRegistry& registry) {
     registry.register_command(std::make_unique<commands::VersionCommand>());
 }
 
-} // namespace alasia
+} // namespace gecko
 
 int main(int argc, char* argv[]) {
-    argparse::ArgumentParser program("alasia", APP_VERSION);
+    argparse::ArgumentParser program("gecko-ddns", APP_VERSION);
     program.add_description("强大的动态 DNS 客户端 - 支持多域名多服务商");
 
     // Run command
@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
 
     // Handle version command
     if (program.is_subcommand_used("version")) {
-        std::cout << "alasia " APP_VERSION << "\n";
+        std::cout << "gecko-ddns " APP_VERSION << "\n";
         if (std::string(APP_COMMIT).size() > 0)
             std::cout << "commit: " APP_COMMIT << "\n";
         if (std::string(APP_BUILD_DATE).size() > 0)
@@ -95,14 +95,14 @@ int main(int argc, char* argv[]) {
         }
 
         // Execute command
-        alasia::commands::CommandContext ctx{
+        gecko::commands::CommandContext ctx{
             .config_path = config_path,
             .work_dir = dir_path,
             .ignore_cache = ignore_cache,
             .timeout_seconds = timeout
         };
 
-        alasia::commands::RunCommand cmd;
+        gecko::commands::RunCommand cmd;
         auto result = cmd.execute(ctx);
 
         if (result.is_error()) {

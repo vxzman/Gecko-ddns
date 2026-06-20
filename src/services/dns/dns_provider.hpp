@@ -4,7 +4,7 @@
 #include <map>
 #include <string>
 
-namespace alasia::services {
+namespace gecko::services {
 
 /// DNS provider interface - abstracts DNS record management
 class DnsProvider {
@@ -28,4 +28,4 @@ public:
                                         const std::map<std::string, std::string>& extra) = 0;
 };
 
-} // namespace alasia::services
+} // namespace gecko::services

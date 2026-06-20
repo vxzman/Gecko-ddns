@@ -1,10 +1,10 @@
-// FreeBSD ioctl implementation for IPv6 address retrieval
+// OpenBSD ioctl implementation for IPv6 address retrieval
 // Reference: goddns/internal/platform/ifaddr/freebsd_ioctl.go
 
 #include "ip_getter.hpp"
 #include "log.hpp"
 
-#if defined(__FreeBSD__)
+#if defined(__OpenBSD__)
 
 #include <cstring>
 #include <ctime>
@@ -18,7 +18,7 @@
 #include <net/if.h>
 #include <ifaddrs.h>
 
-// FreeBSD in6_var.h for IPv6 address lifetime ioctl
+// in6_var.h for IPv6 address lifetime ioctl
 #include <netinet6/in6_var.h>
 
 namespace ip_getter {
@@ -39,7 +39,7 @@ static int get_ipv6_lifetime(const std::string& ifname,
 
     struct in6_ifreq ifr6;
     memset(&ifr6, 0, sizeof(ifr6));
-    strncpy(ifr6.ifr_name, ifname.c_str(), IFNAMSIZ - 1);
+    strlcpy(ifr6.ifr_name, ifname.c_str(), sizeof(ifr6.ifr_name));
     ifr6.ifr_addr = sin6;
 
     if (ioctl(s, SIOCGIFALIFETIME_IN6, &ifr6) == -1) {
@@ -50,13 +50,21 @@ static int get_ipv6_lifetime(const std::string& ifname,
     struct in6_addrlifetime lt = ifr6.ifr_ifru.ifru_lifetime;
     time_t now = time(nullptr);
 
-    // FreeBSD: ia6t_preferred and ia6t_expire are absolute timestamps
-    pltime_out = (lt.ia6t_preferred != (time_t)-1 && lt.ia6t_preferred > now)
-                     ? (uint32_t)(lt.ia6t_preferred - now)
-                     : ND6_INFINITE_LIFETIME;
-    vltime_out = (lt.ia6t_expire != (time_t)-1 && lt.ia6t_expire > now)
-                     ? (uint32_t)(lt.ia6t_expire - now)
-                     : ND6_INFINITE_LIFETIME;
+    // OpenBSD uses 0 as "infinite" sentinel
+    if (lt.ia6t_preferred > 0) {
+        pltime_out = (lt.ia6t_preferred > now)
+                         ? (uint32_t)(lt.ia6t_preferred - now)
+                         : 0U;
+    } else {
+        pltime_out = ND6_INFINITE_LIFETIME;
+    }
+    if (lt.ia6t_expire > 0) {
+        vltime_out = (lt.ia6t_expire > now)
+                         ? (uint32_t)(lt.ia6t_expire - now)
+                         : 0U;
+    } else {
+        vltime_out = ND6_INFINITE_LIFETIME;
+    }
 
     close(s);
     return 0;
@@ -134,4 +142,4 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
 
 } // namespace ip_getter
 
-#endif // __FreeBSD__
+#endif // __OpenBSD__
