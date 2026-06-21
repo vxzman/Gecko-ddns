@@ -123,8 +123,11 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vecto
         // Check shutdown and total timeout
         if (is_shutdown_requested()) {
             logger::warning("Shutdown requested, aborting API queries");
+            // Join completed, detach unfinished
             for (auto& t : tasks) {
-                if (t.thread.joinable()) t.thread.detach();
+                if (!t.thread.joinable()) continue;
+                if (t.done) t.thread.join();   // finished → instant join
+                else        t.thread.detach(); // unfinished → detach
             }
             return std::unexpected("Shutdown requested during API query");
         }
@@ -134,7 +137,9 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vecto
             if (elapsed >= timeout_sec) {
                 logger::warning("API query timeout ({}s)", timeout_sec);
                 for (auto& t : tasks) {
-                    if (t.thread.joinable()) t.thread.detach();
+                    if (!t.thread.joinable()) continue;
+                    if (t.done) t.thread.join();
+                    else        t.thread.detach();
                 }
                 return std::unexpected("API query timeout");
             }
@@ -151,7 +156,8 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vecto
             auto result = t.future.get();
 
             if (!result.ip.empty()) {
-                // Success! Detach remaining threads and return immediately
+                // Success! Join completed thread, detach others, return immediately
+                t.thread.join();  // task already finished, join is instant
                 logger::info("API {} succeeded: {}", t.url, result.ip);
                 for (auto& other : tasks) {
                     if (&other != &t && other.thread.joinable()) other.thread.detach();
@@ -173,6 +179,10 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vecto
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    // All tasks completed but none succeeded — join all threads before return
+    for (auto& t : tasks) {
+        if (t.thread.joinable()) t.thread.join();
+    }
     return std::unexpected("All API requests failed: " + last_error);
 }
 
