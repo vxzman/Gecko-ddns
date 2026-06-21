@@ -40,6 +40,7 @@ std::expected<HttpResponse, std::string> HttpClient::request(
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);  // TCP connect timeout
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "curl/8.0.0");  // mimic curl CLI for IP APIs
     
     if (header_list) {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);

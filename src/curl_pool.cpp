@@ -11,6 +11,7 @@ CurlHandle::CurlHandle() : handle_(curl_easy_init()) {
     if (handle_) {
         // 设置默认选项
         curl_easy_setopt(handle_, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(handle_, CURLOPT_USERAGENT, "gecko-ddns/2.0");
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPALIVE, 1L);
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPIDLE, 60L);
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPINTVL, 60L);
@@ -52,6 +53,7 @@ void CurlHandle::reset() {
         curl_easy_reset(handle_);
         // 重新设置默认选项
         curl_easy_setopt(handle_, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(handle_, CURLOPT_USERAGENT, "gecko-ddns/2.0");
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPALIVE, 1L);
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPIDLE, 60L);
         curl_easy_setopt(handle_, CURLOPT_TCP_KEEPINTVL, 60L);
