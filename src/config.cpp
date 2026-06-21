@@ -252,10 +252,16 @@ bool write_config(const std::string& path, const Config& cfg) {
         rj["proxied"]   = r.proxied;
         rj["use_proxy"] = r.use_proxy;
 
-        if (!r.api_token.empty())         rj["api_token"]         = r.api_token;
-        if (!r.zone_id.empty())           rj["zone_id"]           = r.zone_id;
-        if (!r.access_key_id.empty())     rj["access_key_id"]     = r.access_key_id;
-        if (!r.access_key_secret.empty()) rj["access_key_secret"] = r.access_key_secret;
+        // Write raw values to preserve $env_var references.
+        // zone_id may be auto-fetched at runtime, so write resolved value
+        // (its _raw variant is only set from config file, never from env).
+        if (!r._raw_api_token.empty())         rj["api_token"]         = r._raw_api_token;
+        else if (!r.api_token.empty())         rj["api_token"]         = r.api_token;
+        if (!r.zone_id.empty())                rj["zone_id"]           = r.zone_id;
+        if (!r._raw_access_key_id.empty())     rj["access_key_id"]     = r._raw_access_key_id;
+        else if (!r.access_key_id.empty())     rj["access_key_id"]     = r.access_key_id;
+        if (!r._raw_access_key_secret.empty()) rj["access_key_secret"] = r._raw_access_key_secret;
+        else if (!r.access_key_secret.empty()) rj["access_key_secret"] = r.access_key_secret;
 
         root["records"].push_back(std::move(rj));
     }

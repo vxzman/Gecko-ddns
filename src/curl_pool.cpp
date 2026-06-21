@@ -17,7 +17,7 @@ CurlHandle::CurlHandle() : handle_(curl_easy_init()) {
 
         // DNS 缓存优化：缓存 60 秒
         curl_easy_setopt(handle_, CURLOPT_DNS_CACHE_TIMEOUT, 60L);
-        
+
         // 连接超时（秒），防止连接卡住
         curl_easy_setopt(handle_, CURLOPT_CONNECTTIMEOUT, 10L);
 
@@ -58,7 +58,7 @@ void CurlHandle::reset() {
 
         // DNS 缓存优化：缓存 60 秒
         curl_easy_setopt(handle_, CURLOPT_DNS_CACHE_TIMEOUT, 60L);
-        
+
         // 连接超时（秒），防止连接卡住
         curl_easy_setopt(handle_, CURLOPT_CONNECTTIMEOUT, 10L);
 
@@ -67,9 +67,21 @@ void CurlHandle::reset() {
     }
 }
 
+// ─── PooledHandle ────────────────────────────────────────────────────────────
+
+PooledHandle::~PooledHandle() {
+    return_to_pool();
+}
+
+void PooledHandle::return_to_pool() {
+    if (handle_.valid()) {
+        ConnectionPool::instance().release(std::move(handle_));
+    }
+}
+
 // ─── ConnectionPool ──────────────────────────────────────────────────────────
 
-thread_local std::unique_ptr<CurlHandle> ConnectionPool::tls_handle_;
+thread_local std::optional<CurlHandle> ConnectionPool::tls_handle_;
 
 ConnectionPool& ConnectionPool::instance() {
     static ConnectionPool pool;
@@ -77,19 +89,47 @@ ConnectionPool& ConnectionPool::instance() {
 }
 
 ConnectionPool::~ConnectionPool() {
-    // 清理线程局部存储由 C++ 自动处理
+    // 线程局部存储在程序退出时由 C++ 自动清理
 }
 
-CurlHandle ConnectionPool::acquire() {
-    if (tls_handle_ && tls_handle_->valid()) {
+PooledHandle ConnectionPool::acquire() {
+    if (tls_handle_.has_value() && tls_handle_->valid()) {
         record_hit();
-        tls_handle_->reset();
-        return CurlHandle(std::move(*tls_handle_));
+        CurlHandle h = std::move(*tls_handle_);
+        tls_handle_.reset();  // 标记为已借出
+        h.reset();            // 重置状态以便复用
+        return PooledHandle(std::move(h));
     }
-    
+
     record_miss();
-    tls_handle_ = std::make_unique<CurlHandle>();
-    return CurlHandle(std::move(*tls_handle_));
+    return PooledHandle(CurlHandle{});
+}
+
+void ConnectionPool::release(CurlHandle handle) {
+    if (handle.valid()) {
+        tls_handle_.emplace(std::move(handle));
+    }
+}
+
+ConnectionPool::Stats ConnectionPool::get_stats() const {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    return stats_;
+}
+
+void ConnectionPool::record_hit() {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    stats_.cache_hits++;
+    stats_.total_acquisitions++;
+}
+
+void ConnectionPool::clear_thread_cache() {
+    tls_handle_.reset();
+}
+
+void ConnectionPool::record_miss() {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    stats_.cache_misses++;
+    stats_.total_acquisitions++;
 }
 
 // ─── Global functions ────────────────────────────────────────────────────────
@@ -105,12 +145,14 @@ bool initialize() {
 }
 
 void cleanup() {
+    // 清理当前线程的句柄缓存（必须在 curl_global_cleanup 之前）
+    ConnectionPool::clear_thread_cache();
     curl_global_cleanup();
     logger::debug("libcurl cleaned up");
 }
 
-CURL* get_handle() {
-    return ConnectionPool::instance().acquire().get();
+PooledHandle get_handle() {
+    return ConnectionPool::instance().acquire();
 }
 
 } // namespace curl_pool

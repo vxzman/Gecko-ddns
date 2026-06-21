@@ -130,13 +130,11 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
             }
         }
 
-        bool deprecated = (addr.ifaf_flags & IN6_IFF_DEPRECATED) != 0;
-
         IPv6Info info;
         info.ip = addr_str;
         info.preferred_lft = preferred_lft;
         info.valid_lft = valid_lft;
-        info.is_deprecated = deprecated;
+        // is_deprecated is calculated by populate_info() from lifetime values
         populate_info(&info);
 
         if (info.is_candidate) {

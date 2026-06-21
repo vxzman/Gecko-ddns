@@ -116,7 +116,6 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
 
             const uint8_t* addr = nullptr;
             uint32_t preferred_lft = 0, valid_lft = 0;
-            bool deprecated = (ifa->ifa_flags & IFA_F_DEPRECATED) != 0;
 
             for (; RTA_OK(rta, rta_len); rta = RTA_NEXT(rta, rta_len)) {
                 if (rta->rta_type == IFA_ADDRESS) {
@@ -137,7 +136,7 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
             info.ip            = format_ipv6(addr);
             info.preferred_lft = (preferred_lft == config::ND6_INFINITE_LIFETIME) ? config::INFINITE_LIFETIME_SECONDS : static_cast<long>(preferred_lft);
             info.valid_lft     = (valid_lft     == config::ND6_INFINITE_LIFETIME) ? config::INFINITE_LIFETIME_SECONDS : static_cast<long>(valid_lft);
-            info.is_deprecated = deprecated;
+            // is_deprecated is calculated by populate_info() from lifetime values
             populate_info(&info);
 
             if (info.is_candidate) result.push_back(info);

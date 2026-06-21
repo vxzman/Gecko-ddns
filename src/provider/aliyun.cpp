@@ -220,8 +220,12 @@ std::expected<void, std::string> AliyunProvider::upsert_record(const std::string
                                     const std::string& record_name,
                                     const std::string& ip,
                                     int                ttl,
-                                    const std::map<std::string, std::string>& /*extra*/) {
+                                    const std::map<std::string, std::string>& extra) {
     std::string full_domain = (record_name == "@") ? zone : (record_name + "." + zone);
+
+    std::string type = "AAAA";
+    auto tit = extra.find("type");
+    if (tit != extra.end() && !tit->second.empty()) type = tit->second;
 
     auto record_id_res = get_record_id(full_domain);
     if (!record_id_res) return std::unexpected(record_id_res.error());
@@ -234,7 +238,7 @@ std::expected<void, std::string> AliyunProvider::upsert_record(const std::string
             {"Action",     "AddDomainRecord"},
             {"DomainName", zone},
             {"RR",         record_name},
-            {"Type",       "AAAA"},
+            {"Type",       type},
             {"Value",      ip}
         };
     } else {
@@ -243,7 +247,7 @@ std::expected<void, std::string> AliyunProvider::upsert_record(const std::string
             {"Action",   "UpdateDomainRecord"},
             {"RecordId", record_id},
             {"RR",       record_name},
-            {"Type",     "AAAA"},
+            {"Type",     type},
             {"Value",    ip}
         };
     }
