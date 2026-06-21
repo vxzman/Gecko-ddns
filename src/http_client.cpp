@@ -38,6 +38,7 @@ std::expected<HttpResponse, std::string> HttpClient::request(
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);  // TCP connect timeout
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     
     if (header_list) {

@@ -83,7 +83,9 @@ inline void populate_info(IPv6Info* info) {
 std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string_view iface_name);
 
 /// Query multiple HTTP APIs (tries each, returns first success).
-std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vector<std::string>& urls);
+/// timeout_sec: total timeout for all API queries (0 = no timeout).
+/// Checks is_shutdown_requested() to allow Ctrl+C interruption.
+std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vector<std::string>& urls, int timeout_sec = 0);
 
 /// Select the best (longest PreferredLft) global unicast candidate.
 /// Returns error string on failure.

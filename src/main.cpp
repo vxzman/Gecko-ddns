@@ -3,6 +3,7 @@
 #include "cache.hpp"
 #include "ip_getter.hpp"
 #include "curl_pool.hpp"
+#include "signal.hpp"
 #include "provider/cloudflare.hpp"
 #include "provider/aliyun.hpp"
 
@@ -28,10 +29,6 @@
 #ifndef APP_BUILD_DATE
 #  define APP_BUILD_DATE ""
 #endif
-
-static volatile sig_atomic_t g_shutdown_requested = 0;
-static void signal_handler(int) { g_shutdown_requested = 1; }
-static bool is_shutdown_requested() { return g_shutdown_requested != 0; }
 
 static void print_version() {
     std::cout << "gecko-ddns " APP_VERSION "\n";
@@ -170,17 +167,20 @@ static UpdateResult update_single_record(
 
 // ─── Helper Functions ──────────────────────────────────────────────────────────
 
-static std::string get_current_ip(const config::Config& cfg) {
+static std::string get_current_ip(const config::Config& cfg, int timeout_sec) {
     bool use_interface = !cfg.ip_source.interface_name.empty();
+
+    // use a subset of total timeout for the initial query so fallback has time
+    int query_timeout = timeout_sec > 0 ? std::max(10, timeout_sec / 2) : 0;
 
     auto infos_res = use_interface
         ? ip_getter::get_from_interface(cfg.ip_source.interface_name)
-        : ip_getter::get_from_apis(cfg.ip_source.fallback_urls);
+        : ip_getter::get_from_apis(cfg.ip_source.fallback_urls, query_timeout);
 
     // Only fallback to APIs when the primary source was an interface
     if (!infos_res && use_interface) {
         logger::info("Interface IP source failed: {}. Trying API fallback...", infos_res.error());
-        infos_res = ip_getter::get_from_apis(cfg.ip_source.fallback_urls);
+        infos_res = ip_getter::get_from_apis(cfg.ip_source.fallback_urls, query_timeout);
     }
 
     if (!infos_res) {
@@ -309,8 +309,7 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
         return 1;
     }
 
-    std::signal(SIGINT, signal_handler);
-    std::signal(SIGTERM, signal_handler);
+    setup_shutdown_handlers();
 
     std::error_code ec;
     auto abs_config = std::filesystem::absolute(config_path, ec);
@@ -336,8 +335,8 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
 
     logger::info("gecko-ddns starting with {} record(s)", cfg.records.size());
 
-    // Get current IP
-    std::string current_ip = get_current_ip(cfg);
+    // Get current IP (with timeout to avoid hanging on network issues)
+    std::string current_ip = get_current_ip(cfg, timeout_sec);
     if (current_ip.empty()) {
         logger::error("Failed to get current IP");
         curl_pool::cleanup();
