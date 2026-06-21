@@ -17,10 +17,13 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <arpa/inet.h>
 #include <cctype>
 #include <chrono>
+#include <cstring>
 #include <future>
 #include <ranges>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -35,31 +38,53 @@ namespace {
 static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
     auto result = HttpClient::get(url, {}, config::HTTP_TIMEOUT_SECONDS, config::HTTP_MAX_RETRIES);
     if (!result) {
-        err = result.error();
+        err = "HTTP error: " + result.error();
         return "";
     }
 
-    // Parse response - extract first line and trim
-    std::string body = result->body;
-    auto newline_pos = body.find('\n');
-    if (newline_pos != std::string::npos) {
-        body = body.substr(0, newline_pos);
+    const std::string& body = result->body;
+
+    // Strip carriage returns (handle \r\n line endings)
+    std::string cleaned;
+    cleaned.reserve(body.size());
+    for (char c : body) {
+        if (c != '\r') cleaned += c;
     }
 
-    // Trim whitespace
-    auto is_space = [](unsigned char c) { return std::isspace(c); };
-    auto trimmed = body | std::views::drop_while(is_space)
-                         | std::views::reverse
-                         | std::views::drop_while(is_space)
-                         | std::views::reverse;
-    std::string ip(trimmed.begin(), trimmed.end());
+    // Extract first non-empty line
+    std::istringstream stream(cleaned);
+    std::string line;
+    std::string ip;
+    while (std::getline(stream, line)) {
+        // Trim whitespace from both ends
+        size_t start = line.find_first_not_of(" \t\n\v\f\r");
+        if (start == std::string::npos) continue;  // blank line
+        size_t end = line.find_last_not_of(" \t\n\v\f\r");
+        ip = line.substr(start, end - start + 1);
+        break;
+    }
 
     if (ip.empty()) {
         err = "Empty response from API";
         return "";
     }
 
-    return ip;
+    // Validate that the result is a well-formed IPv6 address
+    unsigned char addr_buf[sizeof(struct in6_addr)];
+    if (inet_pton(AF_INET6, ip.c_str(), addr_buf) != 1) {
+        err = "API returned non-IPv6 address: '" + ip + "'";
+        logger::warning("API {} returned invalid IPv6: '{}'", url, ip);
+        return "";
+    }
+
+    // Normalize to canonical IPv6 format (handles ::, leading zeros, etc.)
+    char normalized[INET6_ADDRSTRLEN];
+    if (inet_ntop(AF_INET6, addr_buf, normalized, sizeof(normalized)) == nullptr) {
+        err = "Failed to normalize IPv6 address: " + std::string(strerror(errno));
+        return "";
+    }
+
+    return std::string(normalized);
 }
 
 } // anonymous namespace
