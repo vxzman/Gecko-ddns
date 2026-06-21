@@ -123,7 +123,7 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
         info.valid_lft = (vltime == ND6_INFINITE_LIFETIME)
                              ? (long)1e12
                              : (long)vltime;
-        info.is_deprecated = (pltime == 0 && vltime > 0);
+        // is_deprecated is calculated by populate_info() from lifetime values
         populate_info(&info);
 
         if (info.is_candidate) {

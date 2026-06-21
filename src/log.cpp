@@ -1,5 +1,6 @@
 #include "log.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -22,8 +23,8 @@ const char* COLOR_GRAY    = "\033[90m";
 
 namespace {
 
-bool g_is_terminal = false;
-LogLevel g_level    = LogLevel::Info;  // Default to Info
+std::atomic<bool> g_is_terminal = false;
+std::atomic<int>  g_level       = static_cast<int>(LogLevel::Info);
 
 bool check_is_terminal(FILE* f) {
     return isatty(fileno(f)) != 0;
@@ -76,26 +77,26 @@ std::string sanitize(const std::string& msg) {
 } // anonymous namespace
 
 bool init() {
-    g_is_terminal = check_is_terminal(stdout);
+    g_is_terminal.store(check_is_terminal(stdout), std::memory_order_relaxed);
     return true;
 }
 
 void set_level(LogLevel level) {
-    g_level = level;
+    g_level.store(static_cast<int>(level), std::memory_order_relaxed);
 }
 
 LogLevel get_level() {
-    return g_level;
+    return static_cast<LogLevel>(g_level.load(std::memory_order_relaxed));
 }
 
 void log_line(const char* level_str, const char* color, LogLevel level, const std::string& msg) {
-    if (std::to_underlying(level) < std::to_underlying(g_level)) {
+    if (std::to_underlying(level) < g_level.load(std::memory_order_relaxed)) {
         return;
     }
 
     std::string sanitized = sanitize(msg);
 
-    if (g_is_terminal) {
+    if (g_is_terminal.load(std::memory_order_relaxed)) {
         std::string txt = std::format("{} {}{}{} {}\n", timestamp(), color, level_str, COLOR_RESET, sanitized);
         std::fputs(txt.c_str(), stdout);
     } else {

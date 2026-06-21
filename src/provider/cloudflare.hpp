@@ -29,7 +29,8 @@ public:
                                                                 const std::string& ip,
                                                                 const std::string& zone_id,
                                                                 int                ttl,
-                                                                bool               proxied);
+                                                                bool               proxied,
+                                                                const std::string& type = "AAAA");
 
 private:
     std::string api_token_;

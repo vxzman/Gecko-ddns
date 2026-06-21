@@ -133,6 +133,10 @@ std::expected<void, std::string> CloudflareProvider::upsert_record(const std::st
     auto it = extra.find("proxied");
     if (it != extra.end()) proxied = (it->second == "true" || it->second == "1");
 
+    std::string type = "AAAA";
+    auto tit = extra.find("type");
+    if (tit != extra.end() && !tit->second.empty()) type = tit->second;
+
     // We need zone_id; resolve it now (callers from main pass it via extra too)
     std::string zone_id;
     auto zit = extra.find("zone_id");
@@ -148,7 +152,7 @@ std::expected<void, std::string> CloudflareProvider::upsert_record(const std::st
         zone_id = *z_res;
     }
 
-    return upsert_record_with_zone_id(zone, record_name, ip, zone_id, ttl, proxied);
+    return upsert_record_with_zone_id(zone, record_name, ip, zone_id, ttl, proxied, type);
 }
 
 std::expected<void, std::string> CloudflareProvider::upsert_record_with_zone_id(const std::string& zone,
@@ -156,10 +160,11 @@ std::expected<void, std::string> CloudflareProvider::upsert_record_with_zone_id(
                                                      const std::string& ip,
                                                      const std::string& zone_id,
                                                      int                ttl,
-                                                     bool               proxied) {
+                                                     bool               proxied,
+                                                     const std::string& type) {
     std::string fqdn = (record_name == "@") ? zone : (record_name + "." + zone);
     std::string search_url = "https://api.cloudflare.com/client/v4/zones/"
-                           + zone_id + "/dns_records?type=AAAA&name=" + fqdn;
+                           + zone_id + "/dns_records?type=" + type + "&name=" + fqdn;
 
     auto search_resp = cf_request("GET", search_url);
     if (!search_resp) return std::unexpected(search_resp.error());
@@ -170,7 +175,7 @@ std::expected<void, std::string> CloudflareProvider::upsert_record_with_zone_id(
     }
 
     json new_record = {
-        {"type",    "AAAA"},
+        {"type",    type},
         {"name",    fqdn},
         {"content", ip},
         {"ttl",     ttl},

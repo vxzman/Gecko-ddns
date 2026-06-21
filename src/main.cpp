@@ -97,7 +97,8 @@ static UpdateResult update_cloudflare_record(
         }
     }
 
-    auto ok = provider.upsert_record_with_zone_id(rec.zone, rec.name, current_ip, zone_id, ttl, proxied);
+    auto ok = provider.upsert_record_with_zone_id(rec.zone, rec.name, current_ip, zone_id, ttl, proxied,
+                                                    rec.type.empty() ? "AAAA" : rec.type);
     if (!ok) {
         result.error = "Cloudflare upsert failed: " + ok.error();
         logger::error("Failed to update {}", result.record_name);
@@ -125,6 +126,7 @@ static UpdateResult update_aliyun_record(
     int ttl = config::get_record_ttl(rec);
     auto provider = provider::AliyunProvider(rec.access_key_id, rec.access_key_secret, proxy_url);
     std::map<std::string, std::string> extra;
+    if (!rec.type.empty()) extra["type"] = rec.type;
 
     auto ok = provider.upsert_record(rec.zone, rec.name, current_ip, ttl, extra);
     if (!ok) {
@@ -169,12 +171,15 @@ static UpdateResult update_single_record(
 // ─── Helper Functions ──────────────────────────────────────────────────────────
 
 static std::string get_current_ip(const config::Config& cfg) {
-    auto infos_res = cfg.ip_source.interface_name.empty()
-        ? ip_getter::get_from_apis(cfg.ip_source.fallback_urls)
-        : ip_getter::get_from_interface(cfg.ip_source.interface_name);
+    bool use_interface = !cfg.ip_source.interface_name.empty();
 
-    if (!infos_res) {
-        logger::info("Primary IP source failed: {}. Trying API fallback...", infos_res.error());
+    auto infos_res = use_interface
+        ? ip_getter::get_from_interface(cfg.ip_source.interface_name)
+        : ip_getter::get_from_apis(cfg.ip_source.fallback_urls);
+
+    // Only fallback to APIs when the primary source was an interface
+    if (!infos_res && use_interface) {
+        logger::info("Interface IP source failed: {}. Trying API fallback...", infos_res.error());
         infos_res = ip_getter::get_from_apis(cfg.ip_source.fallback_urls);
     }
 
@@ -189,25 +194,34 @@ static std::string get_current_ip(const config::Config& cfg) {
     return *ip_res;
 }
 
-// Returns true if DDNS update should be skipped (IP unchanged and cache not ignored)
-static bool check_cache_and_decide_skip(const std::string& current_ip, const std::string& cache_file, bool ignore_cache) {
+/// Result of cache check: whether to skip and the last known IP (from parsed cache)
+struct CacheCheckResult {
+    bool skip = false;
+    std::string last_ip;
+};
+
+/// Returns skip decision + last known IP (avoids parsing cache file twice)
+static CacheCheckResult check_cache_and_decide_skip(const std::string& current_ip,
+                                                     const std::string& cache_file,
+                                                     bool ignore_cache) {
     auto cache_data = cache::parse_cache_file(cache_file);
-    std::string last_ip = cache_data.last_ip;
+    CacheCheckResult result;
+    result.last_ip = cache_data.last_ip;
 
     if (ignore_cache) {
         logger::info("Ignoring cache (--ignore), forcing DDNS update");
-        return false;
+        return result;
     }
 
-    if (!last_ip.empty()) {
-        if (last_ip == current_ip) {
+    if (!result.last_ip.empty()) {
+        if (result.last_ip == current_ip) {
             logger::info("IP has not changed since last run: {} — skipping DDNS update", current_ip);
-            return true;
+            result.skip = true;
         } else {
-            logger::info("IP changed from {} to {}", last_ip, current_ip);
+            logger::info("IP changed from {} to {}", result.last_ip, current_ip);
         }
     }
-    return false;
+    return result;
 }
 
 static void update_records_parallel(
@@ -219,6 +233,11 @@ static void update_records_parallel(
     int&                  fail_count) {
 
     std::vector<UpdateResult> results(cfg.records.size());
+    // Pre-populate with timeout error — completed threads will overwrite
+    for (size_t i = 0; i < cfg.records.size(); ++i) {
+        results[i].record_name = cfg.records[i].name + "." + cfg.records[i].zone;
+        results[i].error = "timeout or shutdown before completion";
+    }
     std::vector<std::thread> threads;
     threads.reserve(cfg.records.size());
 
@@ -279,8 +298,14 @@ static void update_cache(const std::string& cache_file, const std::string& curre
 static int run_cmd(const std::string& config_path, const std::string& dir_path,
                    bool ignore_cache, int timeout_sec) {
 
+    // Initialize logger first so config validation errors are formatted properly
+    if (!logger::init()) {
+        std::cerr << "Failed to initialize logging\n";
+        return 1;
+    }
+
     if (!curl_pool::initialize()) {
-        std::cerr << "Failed to initialize libcurl\n";
+        logger::error("Failed to initialize libcurl");
         return 1;
     }
 
@@ -290,14 +315,14 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
     std::error_code ec;
     auto abs_config = std::filesystem::absolute(config_path, ec);
     if (ec) {
-        std::cerr << "Failed to resolve config path: " << ec.message() << "\n";
+        logger::error("Failed to resolve config path: {}", ec.message());
         curl_pool::cleanup();
         return 1;
     }
 
     auto cfg_opt = config::read_config(abs_config.string());
     if (!cfg_opt) {
-        std::cerr << "Failed to load configuration\n";
+        logger::error("Failed to load configuration");
         curl_pool::cleanup();
         return 1;
     }
@@ -307,13 +332,6 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
     std::string base_dir = dir_path;
     if (base_dir.empty()) {
         base_dir = abs_config.parent_path().string();
-    }
-
-    // Initialize logger
-    if (!logger::init()) {
-        std::cerr << "Failed to initialize logging\n";
-        curl_pool::cleanup();
-        return 1;
     }
 
     logger::info("gecko-ddns starting with {} record(s)", cfg.records.size());
@@ -327,9 +345,10 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
     }
     logger::info("Current IPv6 address: {}", current_ip);
 
-    // Cache
+    // Cache — parse once and reuse
     std::string cache_file = config::get_cache_file_path(abs_config.string(), base_dir);
-    if (check_cache_and_decide_skip(current_ip, cache_file, ignore_cache)) {
+    auto cache_check = check_cache_and_decide_skip(current_ip, cache_file, ignore_cache);
+    if (cache_check.skip) {
         curl_pool::cleanup();
         return 0;
     }
@@ -340,10 +359,9 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
     update_records_parallel(cfg, current_ip, zone_id_cache_file, timeout_sec, success_count, fail_count);
     log_summary(success_count, fail_count);
 
-    // Update cache
-    std::string last_ip = cache::read_last_ip(cache_file);
+    // Update cache (reuse last_ip from earlier parse)
     if (success_count > 0) {
-        update_cache(cache_file, current_ip, last_ip, ignore_cache);
+        update_cache(cache_file, current_ip, cache_check.last_ip, ignore_cache);
     }
 
     curl_pool::cleanup();
