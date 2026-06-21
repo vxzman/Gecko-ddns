@@ -92,9 +92,14 @@ static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
 std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vector<std::string>& urls, int timeout_sec) {
     if (urls.empty()) { return std::unexpected("No API URLs configured"); }
 
-    // Use packaged_task + future for interruptible waiting
     struct ApiResult { std::string ip; std::string error; };
-    std::vector<std::pair<std::thread, std::future<ApiResult>>> tasks;
+    struct Task {
+        std::thread thread;
+        std::future<ApiResult> future;
+        std::string url;
+        bool done = false;
+    };
+    std::vector<Task> tasks;
     tasks.reserve(urls.size());
 
     for (size_t i = 0; i < urls.size(); ++i) {
@@ -105,55 +110,70 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vecto
             return r;
         });
         auto future = task.get_future();
-        tasks.emplace_back(std::thread(std::move(task)), std::move(future));
+        tasks.push_back({std::thread(std::move(task)), std::move(future), urls[i]});
     }
 
     auto start_time = std::chrono::steady_clock::now();
+    size_t completed = 0;
+    const size_t total = tasks.size();
+    std::string last_error;
 
-    // Wait with polling — check for shutdown and timeout
-    for (auto& [thread, future] : tasks) {
-        while (future.wait_for(std::chrono::milliseconds(500)) != std::future_status::ready) {
-            if (is_shutdown_requested()) {
-                logger::warning("Shutdown requested, aborting API queries");
-                // Detach remaining threads (they write to their own stack, which is safe here
-                // because each packaged_task owns its result)
-                for (auto& [t, f] : tasks) {
-                    if (t.joinable()) t.detach();
-                }
-                return std::unexpected("Shutdown requested during API query");
+    // Poll ALL futures concurrently — return on first success
+    while (completed < total) {
+        // Check shutdown and total timeout
+        if (is_shutdown_requested()) {
+            logger::warning("Shutdown requested, aborting API queries");
+            for (auto& t : tasks) {
+                if (t.thread.joinable()) t.thread.detach();
             }
-            if (timeout_sec > 0) {
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now() - start_time).count();
-                if (elapsed >= timeout_sec) {
-                    logger::warning("API query timeout ({}s)", timeout_sec);
-                    for (auto& [t, f] : tasks) {
-                        if (t.joinable()) t.detach();
-                    }
-                    return std::unexpected("API query timeout");
+            return std::unexpected("Shutdown requested during API query");
+        }
+        if (timeout_sec > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start_time).count();
+            if (elapsed >= timeout_sec) {
+                logger::warning("API query timeout ({}s)", timeout_sec);
+                for (auto& t : tasks) {
+                    if (t.thread.joinable()) t.thread.detach();
                 }
+                return std::unexpected("API query timeout");
             }
         }
+
+        // Check all unfinished futures
+        for (auto& t : tasks) {
+            if (t.done) continue;
+            auto status = t.future.wait_for(std::chrono::milliseconds(200));
+            if (status != std::future_status::ready) continue;
+
+            t.done = true;
+            ++completed;
+            auto result = t.future.get();
+
+            if (!result.ip.empty()) {
+                // Success! Detach remaining threads and return immediately
+                logger::info("API {} succeeded: {}", t.url, result.ip);
+                for (auto& other : tasks) {
+                    if (&other != &t && other.thread.joinable()) other.thread.detach();
+                }
+                IPv6Info info;
+                info.ip            = result.ip;
+                info.preferred_lft = config::INFINITE_LIFETIME_SECONDS;
+                info.valid_lft     = config::INFINITE_LIFETIME_SECONDS;
+                populate_info(&info);
+                return std::vector<IPv6Info>{info};
+            }
+
+            // This API failed — log and keep waiting for others
+            logger::error("API {} failed: {}", t.url, result.error);
+            last_error = result.error;
+        }
+
+        // Small sleep to avoid busy-waiting
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    // Collect results — return first success
-    for (auto& [thread, future] : tasks) {
-        if (thread.joinable()) thread.join();
-    }
-    for (size_t i = 0; i < tasks.size(); ++i) {
-        auto result = tasks[i].second.get();
-        if (!result.ip.empty()) {
-            logger::info("API {} succeeded: {}", urls[i], result.ip);
-            IPv6Info info;
-            info.ip            = result.ip;
-            info.preferred_lft = config::INFINITE_LIFETIME_SECONDS;
-            info.valid_lft     = config::INFINITE_LIFETIME_SECONDS;
-            populate_info(&info);
-            return std::vector<IPv6Info>{info};
-        }
-        logger::error("API {} failed: {}", urls[i], result.error);
-    }
-    return std::unexpected("All API requests failed");
+    return std::unexpected("All API requests failed: " + last_error);
 }
 
 // ─── Select best ─────────────────────────────────────────────────────────────
