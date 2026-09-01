@@ -78,7 +78,7 @@ inline void populate_info(IPv6Info* info) {
                           info->valid_lft > 0);
 }
 
-/// Get IPv6 addresses from interface (Linux netlink / FreeBSD ioctl).
+/// Get IPv6 addresses from interface (Linux/FreeBSD netlink / OpenBSD ioctl).
 /// Returns error string on failure.
 std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string_view iface_name);
 

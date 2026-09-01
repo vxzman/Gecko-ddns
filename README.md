@@ -225,7 +225,7 @@ sudo launchctl load /Library/LaunchDaemons/com.gecko-ddns.plist
 | 平台 | IPv6 获取（网卡） | IPv6 获取（HTTP API） | 状态 |
 |------|-------------------|----------------------|------|
 | Linux | ✅ Netlink 原生 | ✅ | 完整支持 |
-| FreeBSD | ✅ Netlink SNL API | ✅ | 完整支持 |
+| FreeBSD | ✅ Netlink 原生 | ✅ | 完整支持 |
 | OpenBSD | ✅ ioctl | ✅ | 完整支持 |
 | macOS | ❌ | ✅ | 仅 HTTP API |
 
@@ -238,7 +238,7 @@ sudo launchctl load /Library/LaunchDaemons/com.gecko-ddns.plist
 - 支持 SLAAC 临时地址和 autoconf 地址的 pltime/vltime 识别
 
 **FreeBSD 使用 Netlink**
-- 从传统 ioctl 迁移至 FreeBSD 14+ 原生 Netlink SNL API（`snl_parse_nlmsg` / `snl_rtm_addr_parser`）
+- 通过 FreeBSD 14+ 原生 Netlink socket（`RTM_GETADDR` / `RTM_NEWADDR`）获取 IPv6 地址和生命周期
 - 与 `ifconfig` 使用相同的内核路径获取地址信息，结果更准确
 
 **平台代码独立**

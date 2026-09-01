@@ -76,7 +76,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Linux uses raw Netlink socket for IPv6 address retrieval
     list(APPEND SOURCES src/ip_getter_linux.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-    # FreeBSD uses Netlink (SNL API, FreeBSD 14+) for IPv6 address retrieval
+    # FreeBSD uses raw Netlink socket (FreeBSD 14+) for IPv6 address retrieval
     list(APPEND SOURCES src/ip_getter_freebsd.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
     # OpenBSD uses ioctl for IPv6 address retrieval

@@ -1,32 +1,32 @@
 // FreeBSD Netlink implementation for IPv6 address retrieval
-// Uses the Netlink SNL (Simple Netlink) API available in FreeBSD 14+.
-// Reference: FreeBSD ifconfig af_inet6.c (in6_status_nl / show_lifetime)
+// Uses the raw Netlink socket API (RTM_GETADDR + RTM_NEWADDR).
 //
-// The Netlink cacheinfo (ifa_cacheinfo) reports remaining lifetimes
-// (ifa_prefered / ifa_valid in seconds) measured at tstamp (CLOCK_MONOTONIC ms).
-// For DDNS purposes the raw remaining values are directly usable.
+// We deliberately avoid the SNL (Simple Netlink) convenience headers
+// (<netlink/netlink_snl.h>): they are written for C and break under C++
+// because snl_realloc_msg_buffer() assigns the void* result of snl_allocz()
+// to a char* (FreeBSD 15.1 / clang 19: "assigning to 'char *' from
+// incompatible type 'void *'"). The raw socket API below is equivalent
+// and keeps the C++ build independent of that header.
 
 #include "ip_getter.hpp"
-#include "log.hpp"
+#include "config.hpp"
 
 #if defined(__FreeBSD__)
 
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 
 #include <net/if.h>
 #include <netinet/in.h>
-#include <netinet/in_var.h>      /* IN6_IFF_* flags */
 #include <arpa/inet.h>
 
 #include <netlink/netlink.h>
 #include <netlink/netlink_route.h>
-#include <netlink/netlink_snl.h>
-#include <netlink/netlink_snl_route.h>
-#include <netlink/netlink_snl_route_parsers.h>
+
+#include <unistd.h>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -35,7 +35,32 @@ namespace ip_getter {
 
 namespace {
 
-constexpr uint32_t ND6_INFINITE_LIFETIME = 0xFFFFFFFFU;
+// ─── RAII wrapper for socket file descriptor ──────────────────────────────────
+
+class SocketGuard {
+    int fd_;
+public:
+    explicit SocketGuard(int fd) : fd_(fd) {}
+    ~SocketGuard() { if (fd_ >= 0) close(fd_); }
+    int get() const { return fd_; }
+    SocketGuard(const SocketGuard&) = delete;
+    SocketGuard& operator=(const SocketGuard&) = delete;
+    SocketGuard(SocketGuard&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
+    SocketGuard& operator=(SocketGuard&& other) noexcept {
+        if (this != &other) {
+            fd_ = other.fd_;
+            other.fd_ = -1;
+        }
+        return *this;
+    }
+};
+
+/// Format raw IPv6 bytes to string.
+static std::string format_ipv6(const uint8_t* addr16) {
+    char buf[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, addr16, buf, sizeof(buf));
+    return buf;
+}
 
 } // anonymous namespace
 
@@ -45,104 +70,149 @@ std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string
         return std::unexpected(std::string("Interface not found: ") + std::string(iface_name));
     }
 
-    // Initialize SNL (Simple Netlink) state
-    struct snl_state ss = {};
-    if (!snl_init(&ss, NETLINK_ROUTE)) {
-        return std::unexpected("snl_init(NETLINK_ROUTE) failed");
+    // Open netlink socket with RAII
+    SocketGuard sock(socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE));
+    if (sock.get() < 0) {
+        return std::unexpected(std::string("socket() failed: ") + strerror(errno));
     }
 
-    // Build RTM_GETADDR dump request
-    struct snl_writer nw = {};
-    snl_init_writer(&ss, &nw);
-    struct nlmsghdr *hdr = snl_create_msg_request(&nw, RTM_GETADDR);
-    if (hdr == nullptr) {
-        snl_free(&ss);
-        return std::unexpected("snl_create_msg_request failed");
-    }
-    hdr->nlmsg_flags |= NLM_F_DUMP;
-    snl_reserve_msg_object(&nw, struct ifaddrmsg);
+    // Set receive timeout (5 seconds)
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    setsockopt(sock.get(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    hdr = snl_finalize_msg(&nw);
-    if (hdr == nullptr || !snl_send_message(&ss, hdr)) {
-        snl_free(&ss);
-        return std::unexpected("RTM_GETADDR send failed");
+    // Send RTM_GETADDR dump request; the kernel filters by ifa_family and
+    // ifa_index (same kernel path as `ifconfig`).
+    struct {
+        nlmsghdr  nlh;
+        ifaddrmsg ifa;
+    } req{};
+    req.nlh.nlmsg_len   = NLMSG_LENGTH(sizeof(ifaddrmsg));
+    req.nlh.nlmsg_type  = RTM_GETADDR;
+    req.nlh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    req.nlh.nlmsg_seq   = 1;
+    req.ifa.ifa_family  = AF_INET6;
+    req.ifa.ifa_index   = iface_idx;
+
+    if (send(sock.get(), &req, req.nlh.nlmsg_len, 0) < 0) {
+        return std::unexpected(std::string("send() failed: ") + strerror(errno));
     }
 
-    uint32_t nlmsg_seq = hdr->nlmsg_seq;
-    struct snl_errmsg_data e = {};
     std::vector<IPv6Info> result;
+    char buf[8192];
+    bool dump_finished = false;
 
-    while ((hdr = snl_read_reply_multi(&ss, nlmsg_seq, &e)) != nullptr) {
-        struct snl_parsed_addr addr;
-        memset(&addr, 0, sizeof(addr));
-
-        if (!snl_parse_nlmsg(&ss, hdr, &snl_rtm_addr_parser, &addr)) {
-            continue;
-        }
-        if (addr.ifa_family != AF_INET6) {
-            continue;
-        }
-        if (addr.ifa_index != iface_idx) {
-            continue;
-        }
-
-        // Determine which sockaddr to use (ifa_local is preferred)
-        struct sockaddr_in6 *sin6;
-        if (addr.ifa_local != nullptr) {
-            sin6 = reinterpret_cast<struct sockaddr_in6 *>(addr.ifa_local);
-        } else if (addr.ifa_address != nullptr) {
-            sin6 = reinterpret_cast<struct sockaddr_in6 *>(addr.ifa_address);
-        } else {
-            continue;
-        }
-
-        // Skip loopback and link-local
-        if (IN6_IS_ADDR_LOOPBACK(&sin6->sin6_addr)) {
-            continue;
-        }
-        if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) {
-            continue;
-        }
-
-        // Convert address to string
-        char addr_str[INET6_ADDRSTRLEN];
-        if (inet_ntop(AF_INET6, &sin6->sin6_addr, addr_str, sizeof(addr_str)) == nullptr) {
-            continue;
-        }
-
-        // Extract lifetimes from cacheinfo
-        // Netlink cacheinfo: ifa_prefered/ifa_valid are remaining seconds
-        // at measurement time (tstamp is CLOCK_MONOTONIC ms).
-        long preferred_lft = static_cast<long>(1e12);
-        long valid_lft = static_cast<long>(1e12);
-
-        if (addr.ifa_cacheinfo != nullptr) {
-            auto *ci = addr.ifa_cacheinfo;
-            if (ci->ifa_prefered != 0 && ci->ifa_prefered != ND6_INFINITE_LIFETIME) {
-                preferred_lft = static_cast<long>(ci->ifa_prefered);
-            } else if (ci->ifa_prefered == 0) {
-                preferred_lft = 0;  // expired / no preferred lifetime
+    while (!dump_finished) {
+        ssize_t len = recv(sock.get(), buf, sizeof(buf), 0);
+        if (len < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return std::unexpected("netlink recv timeout");
             }
-            if (ci->ifa_valid != 0 && ci->ifa_valid != ND6_INFINITE_LIFETIME) {
-                valid_lft = static_cast<long>(ci->ifa_valid);
-            } else if (ci->ifa_valid == 0) {
-                valid_lft = 0;  // expired / no valid lifetime
+            if (errno == EINTR) {
+                continue;
             }
+            return std::unexpected(std::string("recv() failed: ") + strerror(errno));
         }
 
-        IPv6Info info;
-        info.ip = addr_str;
-        info.preferred_lft = preferred_lft;
-        info.valid_lft = valid_lft;
-        // is_deprecated is calculated by populate_info() from lifetime values
-        populate_info(&info);
+        // Iterate the netlink messages in this datagram.
+        int remaining = static_cast<int>(len);
+        const nlmsghdr* nlh = reinterpret_cast<const nlmsghdr*>(buf);
 
-        if (info.is_candidate) {
-            result.push_back(info);
+        while (remaining >= static_cast<int>(sizeof(nlmsghdr)) &&
+               nlh->nlmsg_len >= sizeof(nlmsghdr) &&
+               nlh->nlmsg_len <= static_cast<unsigned>(remaining)) {
+            if (nlh->nlmsg_type == NLMSG_DONE) {
+                dump_finished = true;
+                break;
+            }
+
+            if (nlh->nlmsg_type == NLMSG_ERROR) {
+                const nlmsgerr* err = reinterpret_cast<const nlmsgerr*>(NLMSG_DATA(nlh));
+                if (err->error != 0) {
+                    int errno_value = err->error < 0 ? -err->error : err->error;
+                    return std::unexpected(std::string("netlink error: ") + strerror(errno_value));
+                }
+                // ACK (error == 0): keep waiting for the dump.
+            } else if (nlh->nlmsg_type == RTM_NEWADDR) {
+                const ifaddrmsg* ifa = reinterpret_cast<const ifaddrmsg*>(NLMSG_DATA(nlh));
+                if (ifa->ifa_family == AF_INET6 && ifa->ifa_index == iface_idx) {
+                    // Parse attributes. IFA_ADDRESS is always present; for
+                    // point-to-point links IFA_LOCAL carries the local address.
+                    const rtattr* rta = IFA_RTA(ifa);
+                    int rta_len = static_cast<int>(IFA_PAYLOAD(nlh));
+
+                    const uint8_t* addr = nullptr;   // IFA_ADDRESS
+                    const uint8_t* local = nullptr;  // IFA_LOCAL
+                    uint32_t preferred_lft = 0;
+                    uint32_t valid_lft = 0;
+                    bool has_cacheinfo = false;
+
+                    for (; RTA_OK(rta, rta_len); rta = RTA_NEXT(rta, rta_len)) {
+                        switch (rta->rta_type) {
+                        case IFA_ADDRESS:
+                            if (RTA_PAYLOAD(rta) >= static_cast<int>(sizeof(struct in6_addr))) {
+                                addr = static_cast<const uint8_t*>(RTA_DATA(rta));
+                            }
+                            break;
+                        case IFA_LOCAL:
+                            if (RTA_PAYLOAD(rta) >= static_cast<int>(sizeof(struct in6_addr))) {
+                                local = static_cast<const uint8_t*>(RTA_DATA(rta));
+                            }
+                            break;
+                        case IFA_CACHEINFO:
+                            if (RTA_PAYLOAD(rta) >= static_cast<int>(sizeof(ifa_cacheinfo))) {
+                                const auto* ci = static_cast<const ifa_cacheinfo*>(RTA_DATA(rta));
+                                preferred_lft = ci->ifa_prefered;
+                                valid_lft = ci->ifa_valid;
+                                has_cacheinfo = true;
+                            }
+                            break;
+                        default:
+                            break;
+                        }
+                    }
+
+                    const uint8_t* chosen = local != nullptr ? local : addr;
+                    if (chosen != nullptr && !is_link_local(chosen) && !is_loopback(chosen)) {
+                        // Remaining lifetimes in seconds as reported by the kernel
+                        // (same semantics as the previous SNL-based implementation).
+                        long preferred_lft_out = config::INFINITE_LIFETIME_SECONDS;
+                        long valid_lft_out = config::INFINITE_LIFETIME_SECONDS;
+
+                        if (has_cacheinfo) {
+                            if (preferred_lft != 0 && preferred_lft != config::ND6_INFINITE_LIFETIME) {
+                                preferred_lft_out = static_cast<long>(preferred_lft);
+                            } else if (preferred_lft == 0) {
+                                preferred_lft_out = 0;  // expired / no preferred lifetime
+                            }
+                            if (valid_lft != 0 && valid_lft != config::ND6_INFINITE_LIFETIME) {
+                                valid_lft_out = static_cast<long>(valid_lft);
+                            } else if (valid_lft == 0) {
+                                valid_lft_out = 0;  // expired / no valid lifetime
+                            }
+                        }
+
+                        IPv6Info info;
+                        info.ip = format_ipv6(chosen);
+                        info.preferred_lft = preferred_lft_out;
+                        info.valid_lft = valid_lft_out;
+                        // is_deprecated is calculated by populate_info() from lifetime values
+                        populate_info(&info);
+
+                        if (info.is_candidate) {
+                            result.push_back(info);
+                        }
+                    }
+                }
+            }
+
+            const int step = static_cast<int>(NLMSG_ALIGN(nlh->nlmsg_len));
+            remaining -= step;
+            nlh = reinterpret_cast<const nlmsghdr*>(
+                reinterpret_cast<const char*>(nlh) + step);
         }
     }
-
-    snl_free(&ss);
 
     if (result.empty()) {
         return std::unexpected("No suitable IPv6 address on interface " + std::string(iface_name));
