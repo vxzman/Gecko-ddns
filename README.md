@@ -27,6 +27,14 @@
 ./build.sh 2.0      # 或显式指定版本
 ```
 
+> FreeBSD 建议先安装系统依赖，避免构建时从 GitHub 下载（网络不稳定时可能失败）：
+>
+> ```bash
+> sudo pkg install nlohmann-json argparse
+> ```
+>
+> 未安装时 CMake 会自动回退到从 GitHub 获取这两个头文件库。
+
 验证：
 
 ```bash

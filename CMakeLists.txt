@@ -37,17 +37,23 @@ find_package(CURL REQUIRED)
 # OpenSSL (system)
 find_package(OpenSSL REQUIRED)
 
-# nlohmann/json (header-only, FetchContent)
+# Header-only deps: prefer system packages (e.g. FreeBSD: pkg install
+# nlohmann-json argparse) and fall back to FetchContent downloads, which
+# can fail on networks with restricted access to GitHub.
 include(FetchContent)
+
+find_package(nlohmann_json QUIET)
+if(NOT nlohmann_json_FOUND)
 FetchContent_Declare(
     nlohmann_json
     URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
     URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
 )
 FetchContent_MakeAvailable(nlohmann_json)
+endif()
 
-# argparse (header-only, FetchContent)
-# Using specific commit hash for reproducible builds
+find_package(argparse QUIET)
+if(NOT argparse_FOUND)
 FetchContent_Declare(
     argparse
     GIT_REPOSITORY https://github.com/p-ranav/argparse.git
@@ -55,6 +61,7 @@ FetchContent_Declare(
     GIT_SHALLOW    FALSE  # Full history for better reproducibility
 )
 FetchContent_MakeAvailable(argparse)
+endif()
 
 # ─── Sources ───────────────────────────────────────────────────────────────────
 
@@ -93,7 +100,7 @@ target_link_libraries(gecko-ddns PRIVATE
     CURL::libcurl
     OpenSSL::Crypto
     nlohmann_json::nlohmann_json
-    argparse
+    argparse::argparse
     pthread
 )
 
