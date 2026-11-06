@@ -29,13 +29,21 @@ if(WARNINGS_AS_ERRORS)
     add_compile_options(-Werror)
 endif()
 
+option(BUILD_STATIC "Build statically linked binary" OFF)
+
 # ─── Dependencies ──────────────────────────────────────────────────────────────
 
-# libcurl (system)
-find_package(CURL REQUIRED)
+if(BUILD_STATIC)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(CURL REQUIRED libcurl)
+    pkg_check_modules(OPENSSL REQUIRED openssl)
+else()
+    # libcurl (system)
+    find_package(CURL REQUIRED)
 
-# OpenSSL (system)
-find_package(OpenSSL REQUIRED)
+    # OpenSSL (system)
+    find_package(OpenSSL REQUIRED)
+endif()
 
 # Header-only deps: prefer system packages (e.g. FreeBSD: pkg install
 # nlohmann-json argparse) and fall back to FetchContent downloads, which
@@ -85,9 +93,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     # FreeBSD uses raw Netlink socket (FreeBSD 14+) for IPv6 address retrieval
     list(APPEND SOURCES src/ip_getter_freebsd.cpp)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
-    # OpenBSD uses ioctl for IPv6 address retrieval
-    list(APPEND SOURCES src/ip_getter_bsd.cpp)
+else()
+    message(FATAL_ERROR "gecko-ddns supports only Linux and FreeBSD")
 endif()
 
 add_executable(gecko-ddns ${SOURCES})
@@ -96,13 +103,24 @@ target_include_directories(gecko-ddns PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(gecko-ddns PRIVATE
-    CURL::libcurl
-    OpenSSL::Crypto
-    nlohmann_json::nlohmann_json
-    argparse::argparse
-    pthread
-)
+if(BUILD_STATIC)
+    target_link_libraries(gecko-ddns PRIVATE
+        ${CURL_STATIC_LIBRARIES}
+        ${OPENSSL_STATIC_LIBRARIES}
+        nlohmann_json::nlohmann_json
+        argparse::argparse
+        pthread
+    )
+    target_link_options(gecko-ddns PRIVATE -static -no-pie)
+else()
+    target_link_libraries(gecko-ddns PRIVATE
+        CURL::libcurl
+        OpenSSL::Crypto
+        nlohmann_json::nlohmann_json
+        argparse::argparse
+        pthread
+    )
+endif()
 
 # ─── Version info via compile definitions ──────────────────────────────────────
 # Can be overridden with: cmake -DAPP_VERSION=v1.0.0 -DAPP_COMMIT=abc1234 ...

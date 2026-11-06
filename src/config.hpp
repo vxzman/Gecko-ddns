@@ -33,37 +33,32 @@ struct IPSource {
 struct RecordConfig {
     std::string provider;
     std::string zone;
-    std::string name;         ///< record name / subdomain
-    std::string type;         ///< "AAAA" (default) or "A"
+    std::string name;         ///< RR label; "@" is the zone apex
+    std::string type = "AAAA";
     int         ttl       = 0;
     bool        proxied   = false; ///< Cloudflare CDN proxy only
     bool        use_proxy = false;
 
-    // Provider-specific fields (flat — validated at runtime by provider)
     std::string api_token;          ///< Cloudflare
     std::string zone_id;            ///< Cloudflare (auto-fetched if empty)
     std::string access_key_id;      ///< Aliyun
     std::string access_key_secret;  ///< Aliyun
-
-    // Raw values before environment variable expansion (for security logging)
-    std::string _raw_api_token;
-    std::string _raw_zone_id;
-    std::string _raw_access_key_id;
-    std::string _raw_access_key_secret;
 };
 
 struct Config {
-    std::map<std::string, std::string> environment; ///< Environment variables (from "env")
-    IPSource                           ip_source;
-    std::string                        proxy;       ///< global proxy for DNS API
-    std::vector<RecordConfig>          records;
+    IPSource                  ip_source;
+    std::string               proxy;       ///< global proxy for DNS API
+    std::vector<RecordConfig> records;
 };
+
+/// Display name. Apex records are the zone itself, not "@.zone".
+inline std::string record_fqdn(const RecordConfig& record) {
+    if (record.name == "@") return record.zone;
+    return record.name + "." + record.zone;
+}
 
 /// Read and validate config JSON. Returns nullopt on any error.
 std::optional<Config> read_config(const std::string& path);
-
-/// Write config to file (used to persist auto-fetched zone_id, etc.)
-bool write_config(const std::string& path, const Config& cfg);
 
 /// Returns the cache file path next to the config file (or in work_dir)
 std::string get_cache_file_path(const std::string& config_abs_path,
@@ -87,7 +82,7 @@ std::map<std::string, std::string> read_zone_id_cache(const std::string& path);
 /// Update ZoneID cache for a specific zone
 bool update_zone_id_cache(const std::string& path, const std::string& zone, const std::string& zone_id);
 
-/// Get ZoneID cache file path
-std::string get_zone_id_cache_path(const std::string& config_abs_path);
+/// Zone ID cache next to the IP cache file.
+std::string get_zone_id_cache_path(const std::string& cache_file_path);
 
 } // namespace config

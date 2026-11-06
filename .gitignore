@@ -1,10 +1,11 @@
-build/
+build*/
 *.lastip
 *.config
 .cache/
 compile_commands.json
 .clangd/
 .qwen/
+.claude/
 *.key
 config.json
 *.txt

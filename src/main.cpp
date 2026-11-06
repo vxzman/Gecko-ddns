@@ -57,7 +57,7 @@ static UpdateResult update_cloudflare_record(
     const std::string&          zone_id_cache_file) {
 
     UpdateResult result;
-    result.record_name = rec.name + "." + rec.zone;
+    result.record_name = config::record_fqdn(rec);
 
     logger::info("Processing record: {} ({})", result.record_name, rec.provider);
 
@@ -115,7 +115,7 @@ static UpdateResult update_aliyun_record(
     const std::string&          current_ip) {
 
     UpdateResult result;
-    result.record_name = rec.name + "." + rec.zone;
+    result.record_name = config::record_fqdn(rec);
 
     logger::info("Processing record: {} ({})", result.record_name, rec.provider);
 
@@ -147,7 +147,7 @@ static UpdateResult update_single_record(
     const std::atomic<bool>&    timed_out) {
 
     UpdateResult result;
-    result.record_name = rec.name + "." + rec.zone;
+    result.record_name = config::record_fqdn(rec);
 
     if (timed_out.load() || is_shutdown_requested()) {
         result.error = "shutdown requested";
@@ -235,7 +235,7 @@ static void update_records_parallel(
     std::vector<UpdateResult> results(cfg.records.size());
     // Pre-populate with timeout error — completed threads will overwrite
     for (size_t i = 0; i < cfg.records.size(); ++i) {
-        results[i].record_name = cfg.records[i].name + "." + cfg.records[i].zone;
+        results[i].record_name = config::record_fqdn(cfg.records[i]);
         results[i].error = "timeout or shutdown before completion";
     }
     std::vector<std::thread> threads;
@@ -353,7 +353,7 @@ static int run_cmd(const std::string& config_path, const std::string& dir_path,
     }
 
     // Update records
-    std::string zone_id_cache_file = config::get_zone_id_cache_path(abs_config.string());
+    std::string zone_id_cache_file = config::get_zone_id_cache_path(cache_file);
     int success_count = 0, fail_count = 0;
     update_records_parallel(cfg, current_ip, zone_id_cache_file, timeout_sec, success_count, fail_count);
     log_summary(success_count, fail_count);

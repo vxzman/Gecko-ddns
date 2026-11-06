@@ -5,7 +5,6 @@
 // Platform-specific get_from_interface() implementations live in:
 //   ip_getter_linux.cpp    (Linux, Netlink socket)
 //   ip_getter_freebsd.cpp  (FreeBSD, Netlink socket)
-//   ip_getter_bsd.cpp      (OpenBSD, ioctl SIOCGIFALIFETIME_IN6)
 
 #include "ip_getter.hpp"
 #include "config.hpp"

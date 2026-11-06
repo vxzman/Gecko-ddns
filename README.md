@@ -1,153 +1,115 @@
-# Gecko-ddns — 轻量级动态 DNS 客户端
+# Gecko-ddns
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20FreeBSD%20%7C%20OpenBSD%20%7C%20macOS-yellow)](README.md)
-[![Version](https://img.shields.io/badge/version-2.0-green)](README.md)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20FreeBSD-yellow)](README.md)
 [![Standard](https://img.shields.io/badge/C%2B%2B-23-blue)](README.md)
 
-**Gecko-ddns** 是一个用现代 C++23 编写的高性能动态 DNS (DDNS) 客户端，支持多平台、多服务商、IPv6 优先。名称取自壁虎（Gecko）— 轻巧灵活，适应各种环境。
+用 C++23 写的 IPv6 DDNS 客户端。从网卡或 HTTP 接口取出当前 IPv6，更新 Cloudflare 和阿里云的 AAAA 记录。
 
-## 特性
+只支持 Linux 和 FreeBSD。
 
-- **多平台**：Linux、FreeBSD、OpenBSD、macOS
-- **多服务商**：Cloudflare、阿里云 DNS（架构易扩展）
-- **IPv6 优先**：支持从网卡或 HTTP API 获取 IPv6 地址，自动过滤链路本地/ULA/环回地址
-- **并发更新**：多条 DNS 记录同时更新
-- **缓存机制**：IP 未变化时不触发 API 调用
-- **敏感信息管理**：`environment` 集中定义，通过 `$变量名` 引用，日志自动脱敏
-- **代理支持**：Cloudflare 支持 HTTP/SOCKS5 代理（仅 Cloudflare）
-- **连接池**：CURL 连接池 + TCP Keepalive
+## 构建
 
-## 快速开始
-
-### 1. 构建
+依赖：CMake 3.20+、C++23 编译器、libcurl、OpenSSL。头文件库优先用系统里的 nlohmann-json 和 argparse，找不到再从 GitHub 下载。
 
 ```bash
-./build.sh          # 编译 2.0 版本
-./build.sh 2.0      # 或显式指定版本
-```
-
-> FreeBSD 建议先安装系统依赖，避免构建时从 GitHub 下载（网络不稳定时可能失败）：
->
-> ```bash
-> sudo pkg install nlohmann-json argparse
-> ```
->
-> 未安装时 CMake 会自动回退到从 GitHub 获取这两个头文件库。
-
-验证：
-
-```bash
+./build.sh
 ./build/gecko-ddns version
 ```
 
-### 2. 配置
+FreeBSD 上建议先安装头文件库：
+
+```bash
+sudo pkg install nlohmann-json argparse
+```
+
+`./build-static.sh` 用 Docker 里的 Alpine 打静态链接的 Linux 二进制，需要本机有 Docker。
+
+## 配置
 
 ```bash
 cp config.example.json config.json
 ```
 
-完整配置说明见下方 [配置](#配置) 一节。
+不用的服务商整段删掉。凭证每个服务商只写一次。记录类型固定是 AAAA，不出现在配置里。
 
-### 3. 运行
-
-```bash
-./build/gecko-ddns run -c config.json -d /etc/gecko-ddns
-```
-
-## 配置
-
-配置文件为 JSON 格式。以下示例使用 JSONC 语法（带注释）讲解字段，实际使用时请复制 `config.example.json` 并填入自己的值。
-
-```jsonc
+```json
 {
-  // ── env ────────────────────────────────────────────────
-  // 敏感信息集中存放，通过 $变量名 在 records 中引用。
-  // 仅支持 $name 语法，不支持 ${name} 或系统环境变量。
-  "env": {
-    "cf_token": "your_cloudflare_api_token",
-    "cf_zone": "your_cloudflare_zone_id",
-    "ak_id": "your_aliyun_access_key_id",
-    "ak_secret": "your_aliyun_access_key_secret"
-  },
-
-  // ── ip_source ──────────────────────────────────────────
-  // interface 优先；fallback_urls 永不使用代理。
-  "ip_source": {
-    "interface": "eth0",
-    "fallback_urls": [
-      "https://ipv6.icanhazip.com",
-      "https://6.ipw.cn"
+  "interface": "vtnet0",
+  "fallback_urls": [
+    "https://ipv6.icanhazip.com",
+    "https://6.ipw.cn"
+  ],
+  "proxy": "",
+  "cloudflare": {
+    "token": "Cloudflare API Token",
+    "records": [
+      {
+        "name": "www.example.com",
+        "zone_id": "",
+        "ttl": 180,
+        "proxied": false,
+        "use_proxy": false
+      },
+      {
+        "name": "example.com",
+        "zone_id": "",
+        "ttl": 180,
+        "proxied": false,
+        "use_proxy": false
+      }
     ]
   },
-
-  // ── proxy ──────────────────────────────────────────────
-  // 全局代理（可选），仅用于 DNS API 请求（Cloudflare）。
-  // 不影响 ip_source 的 IP 探测。
-  "proxy": "",
-
-  // ── records ────────────────────────────────────────────
-  // 各 provider 字段平铺，运行期按 provider 校验。
-  "records": [
-    {
-      "provider": "cloudflare",
-      "zone": "example.com",
-      "name": "www",
-      "type": "AAAA",
-      "ttl": 300,
-      "proxied": false,
-      "use_proxy": false,
-
-      "api_token": "$cf_token",
-      "zone_id": "$cf_zone"
-    },
-    {
-      "provider": "aliyun",
-      "zone": "example.cn",
-      "name": "www",
-      "type": "AAAA",
-      "ttl": 600,
-      "use_proxy": false,
-
-      "access_key_id": "$ak_id",
-      "access_key_secret": "$ak_secret"
-    }
-  ]
+  "aliyun": {
+    "access_key_id": "AccessKey ID",
+    "access_key_secret": "AccessKey Secret",
+    "records": [
+      {
+        "name": "www.example.cn",
+        "ttl": 600,
+        "use_proxy": false
+      }
+    ]
+  }
 }
 ```
 
-### 服务商对比
-
-| | Cloudflare | 阿里云 |
-|--|------------|--------|
-| **认证** | API Token | AccessKey ID + Secret |
-| **权限** | `Zone:DNS:Edit` | `AliyunDNSFullAccess` |
-| **代理** | ✅ HTTP/SOCKS5 | ✅ HTTP/SOCKS5 |
-| **Zone ID** | 留空自动获取 | — |
-
-## 命令行
-
-```
-gecko-ddns <command> [options]
-```
-
-| 命令 | 说明 |
+| 字段 | 含义 |
 |------|------|
-| `run` | 执行 DDNS 更新 |
-| `version` | 显示版本信息 |
+| `interface` | 网卡名。Linux 上例如 `eth0`，FreeBSD 上例如 `vtnet0`。和 `fallback_urls` 至少写一个 |
+| `fallback_urls` | 网卡获取失败时按顺序尝试的 HTTP 地址。这些请求不走代理，也没有真实的地址生命周期 |
+| `proxy` | DNS API 代理，支持 `http`、`https`、`socks5`、`socks5h`。留空表示不使用 |
+| `cloudflare.token` | Cloudflare API Token，需要 `Zone:DNS:Edit` |
+| `aliyun.access_key_id` / `access_key_secret` | 阿里云密钥，需要 `AliyunDNSFullAccess` |
+| `records[].name` | 完整域名。`example.com` 是根域名，`www.example.com` 的主机记录是 `www` |
+| `records[].zone_id` | 仅 Cloudflare。留空则查询后写入 `cache.zoneid.json`，不回写配置文件 |
+| `records[].ttl` | 可选。Cloudflare 缺省 180，阿里云缺省 600 |
+| `records[].proxied` | 仅 Cloudflare，是否开启橙云，默认 false |
+| `records[].use_proxy` | 为 true 时，这条记录的 API 请求走全局 `proxy` |
 
-`run` 命令参数：
+`example.com.cn` 这种多段公共后缀的根域名，和它下面的主机无法从名字本身区分开。根域名请写成只有两段的名字，或者把主机写在最左边，例如 `www.example.com.cn`。
 
-| 参数 | 简写 | 默认值 | 说明 |
-|------|------|--------|------|
-| `--config` | `-c` | 无 | 配置文件路径 |
-| `--dir` | `-d` | 配置目录 | 工作目录（存放缓存文件 `cache.lastip`） |
-| `--ignore-cache` | `-i` | false | 忽略缓存，强制更新 |
-| `--timeout` | `-t` | 300 | 超时时间（秒） |
+选出地址时丢掉链路本地、ULA、环回和已弃用地址。剩下的全局单播里，取 preferred lifetime 最长的。生命周期用内核原始的 pltime/vltime，和 `ifconfig` 不加 `-L` 时一致。`0xffffffff` 视为永久。
 
-## 部署
+IP 没变则跳过更新。缓存文件 `cache.lastip` 只保留最后一次 IP，放在配置文件旁边；`-d` 可以改目录。旧的「时间 IP」多行缓存仍能读出最后一条。
 
-### systemd（推荐）
+## 运行
+
+```bash
+./build/gecko-ddns run -c config.json
+./build/gecko-ddns run -c /etc/gecko-ddns/config.json -d /etc/gecko-ddns
+```
+
+| 参数 | 简写 | 默认 | 说明 |
+|------|------|------|------|
+| `--config` | `-c` | 无 | 配置文件 |
+| `--dir` | `-d` | 配置文件所在目录 | 缓存目录 |
+| `--ignore` | `-i` | false | 忽略缓存，强制更新，并且不写缓存 |
+| `--timeout` | `-t` | 300 | 超时（秒） |
+
+`version` 打印版本。
+
+### systemd
 
 `/etc/systemd/system/gecko-ddns.service`：
 
@@ -170,7 +132,7 @@ WantedBy=multi-user.target
 
 ```ini
 [Unit]
-Description=Run Gecko-ddns DDNS every 10 minutes
+Description=Run Gecko-ddns every 10 minutes
 Requires=gecko-ddns.service
 
 [Timer]
@@ -182,92 +144,15 @@ Unit=gecko-ddns.service
 WantedBy=timers.target
 ```
 
-启用：
-
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now gecko-ddns.timer
 ```
 
-### Crontab
+日志在 stdout。systemd 下用 `journalctl -u gecko-ddns.service` 查看。
 
-```bash
-*/10 * * * * /usr/local/bin/gecko-ddns run -c /etc/gecko-ddns/config.json -d /etc/gecko-ddns >> /var/log/gecko-ddns.log 2>&1
-```
+## 许可
 
-### macOS launchd
+MIT。见 [LICENSE](LICENSE)。
 
-`/Library/LaunchDaemons/com.gecko-ddns.plist`：
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.gecko-ddns</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/gecko-ddns</string>
-        <string>run</string>
-        <string>-c</string>
-        <string>/etc/gecko-ddns/config.json</string>
-    </array>
-    <key>StartInterval</key>
-    <integer>600</integer>
-    <key>RunAtLoad</key>
-    <true/>
-</dict>
-</plist>
-```
-
-加载：
-
-```bash
-sudo launchctl load /Library/LaunchDaemons/com.gecko-ddns.plist
-```
-
-## 平台支持
-
-| 平台 | IPv6 获取（网卡） | IPv6 获取（HTTP API） | 状态 |
-|------|-------------------|----------------------|------|
-| Linux | ✅ Netlink 原生 | ✅ | 完整支持 |
-| FreeBSD | ✅ Netlink 原生 | ✅ | 完整支持 |
-| OpenBSD | ✅ ioctl | ✅ | 完整支持 |
-| macOS | ❌ | ✅ | 仅 HTTP API |
-
-## v2.0 更新说明
-
-**项目更名**：`alasia` → `gecko-ddns`
-
-**新增 OpenBSD 支持**
-- 通过 `SIOCGIFALIFETIME_IN6` ioctl 获取 IPv6 地址和生命周期
-- 支持 SLAAC 临时地址和 autoconf 地址的 pltime/vltime 识别
-
-**FreeBSD 使用 Netlink**
-- 通过 FreeBSD 14+ 原生 Netlink socket（`RTM_GETADDR` / `RTM_NEWADDR`）获取 IPv6 地址和生命周期
-- 与 `ifconfig` 使用相同的内核路径获取地址信息，结果更准确
-
-**平台代码独立**
-- Linux、FreeBSD、OpenBSD 各平台 IPv6 获取逻辑分离到独立文件
-- 新增平台只需添加源文件 + CMake 分支即可接入
-
-## 故障排查
-
-| 错误 | 解决方案 |
-|------|----------|
-| `Config: record[0]: cloudflare.api_token is not set` | 检查 `environment` 中变量是否定义，引用名是否正确 |
-| `Failed to get current IP` | 检查网卡名（`ip addr`），确保 IPv6 已启用，或改用 `urls` API 方式 |
-| `Invalid API Token` | 检查 Token 和 `Zone:DNS:Edit` 权限 |
-| `InvalidSignature` | 检查 AccessKey，确保系统时间准确（NTP 同步） |
-
-日志默认输出到 stdout，systemd 用户可通过 `journalctl -u gecko-ddns.service -f` 查看。
-
-## 贡献与许可
-
-欢迎提交 Issue 和 Pull Request。
-
-项目采用 **MIT License** — 详见 [LICENSE](LICENSE) 文件。
-
-致谢：[nlohmann/json](https://github.com/nlohmann/json)、[argparse](https://github.com/p-ranav/argparse)、[libcurl](https://curl.se/)、[OpenSSL](https://www.openssl.org/)
+依赖：[nlohmann/json](https://github.com/nlohmann/json)、[argparse](https://github.com/p-ranav/argparse)、[libcurl](https://curl.se/)、[OpenSSL](https://www.openssl.org/)。

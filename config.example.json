@@ -1,40 +1,39 @@
 {
-    "env": {
-        "cf_token": "your_cloudflare_api_token_here",
-        "cf_zone": "your_cloudflare_zone_id_here",
-        "ak_id": "your_aliyun_access_key_id_here",
-        "ak_secret": "your_aliyun_access_key_secret_here"
-    },
-    "ip_source": {
-        "interface": "eth0",
-        "fallback_urls": [
-            "https://ipv6.icanhazip.com",
-            "https://6.ipw.cn",
-            "https://v6.ipv6-test.com/api/myip.php"
-        ]
-    },
-    "proxy": "",
+  "interface": "vtnet0",
+  "fallback_urls": [
+    "https://ipv6.icanhazip.com",
+    "https://6.ipw.cn",
+    "https://v6.ipv6-test.com/api/myip.php"
+  ],
+  "proxy": "",
+  "cloudflare": {
+    "token": "你的 Cloudflare API Token",
     "records": [
-        {
-            "provider": "cloudflare",
-            "zone": "example.com",
-            "name": "www",
-            "type": "AAAA",
-            "ttl": 300,
-            "proxied": false,
-            "use_proxy": false,
-            "api_token": "$cf_token",
-            "zone_id": "$cf_zone"
-        },
-        {
-            "provider": "aliyun",
-            "zone": "example.cn",
-            "name": "www",
-            "type": "AAAA",
-            "ttl": 600,
-            "use_proxy": false,
-            "access_key_id": "$ak_id",
-            "access_key_secret": "$ak_secret"
-        }
+      {
+        "name": "www.example.com",
+        "zone_id": "",
+        "ttl": 180,
+        "proxied": false,
+        "use_proxy": false
+      },
+      {
+        "name": "home.example.com",
+        "zone_id": "",
+        "ttl": 180,
+        "proxied": false,
+        "use_proxy": false
+      }
     ]
+  },
+  "aliyun": {
+    "access_key_id": "你的 AccessKey ID",
+    "access_key_secret": "你的 AccessKey Secret",
+    "records": [
+      {
+        "name": "www.example.cn",
+        "ttl": 600,
+        "use_proxy": false
+      }
+    ]
+  }
 }

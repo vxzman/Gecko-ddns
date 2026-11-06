@@ -29,7 +29,7 @@ struct IPv6Info {
     bool        is_candidate  = false; ///< Whether it is a DDNS candidate
 };
 
-// ─── Inline utilities (shared across ip_getter.cpp and ip_getter_bsd.cpp) ──
+// ─── Inline utilities (shared across ip_getter.cpp and platform getters) ──
 
 inline bool is_link_local(const uint8_t* addr16) {
     return addr16[0] == 0xfe && (addr16[1] & 0xc0) == 0x80;
@@ -78,7 +78,7 @@ inline void populate_info(IPv6Info* info) {
                           info->valid_lft > 0);
 }
 
-/// Get IPv6 addresses from interface (Linux/FreeBSD netlink / OpenBSD ioctl).
+/// Get IPv6 addresses from interface (Linux/FreeBSD netlink).
 /// Returns error string on failure.
 std::expected<std::vector<IPv6Info>, std::string> get_from_interface(std::string_view iface_name);
 
