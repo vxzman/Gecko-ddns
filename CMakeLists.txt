@@ -31,6 +31,12 @@ endif()
 
 option(BUILD_STATIC "Build statically linked binary" OFF)
 
+option(ENABLE_SANITIZERS "Build with ASan+UBSan" OFF)
+if(ENABLE_SANITIZERS)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
 # ─── Dependencies ──────────────────────────────────────────────────────────────
 
 if(BUILD_STATIC)
@@ -88,8 +94,9 @@ set(SOURCES
 
 # Platform-specific sources
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Linux uses raw Netlink socket for IPv6 address retrieval
-    list(APPEND SOURCES src/ip_getter_linux.cpp)
+    # Linux uses raw Netlink socket for IPv6 address retrieval.
+    # netns probe is Linux-only; the header still parses probe JSON on FreeBSD.
+    list(APPEND SOURCES src/ip_getter_linux.cpp src/netns_probe.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     # FreeBSD uses raw Netlink socket (FreeBSD 14+) for IPv6 address retrieval
     list(APPEND SOURCES src/ip_getter_freebsd.cpp)
@@ -135,6 +142,12 @@ target_compile_definitions(gecko-ddns PRIVATE
     APP_BUILD_DATE="${APP_BUILD_DATE}"
     APP_COMPILER="${APP_COMPILER}"
 )
+
+enable_testing()
+add_executable(probe_parse_test tests/probe_parse_test.cpp)
+target_include_directories(probe_parse_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(probe_parse_test PRIVATE nlohmann_json::nlohmann_json)
+add_test(NAME probe_parse_test COMMAND probe_parse_test)
 
 # ─── Install ───────────────────────────────────────────────────────────────────
 install(TARGETS gecko-ddns DESTINATION bin)

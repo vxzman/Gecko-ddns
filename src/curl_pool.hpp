@@ -1,113 +1,92 @@
 #pragma once
 
-#include <curl/curl.h>
+#include "curl_raii.hpp"
 
-#include <chrono>
-#include <memory>
 #include <mutex>
 #include <optional>
-#include <vector>
+#include <utility>
 
 namespace curl_pool {
 
-/// CURL 句柄的 RAII 包装器
+/// One easy handle. Cleanup lives in CurlDeleter.
 class CurlHandle {
 public:
-    CurlHandle();
-    ~CurlHandle();
+    struct Empty {};
 
-    // 禁止拷贝
+    CurlHandle();
+    explicit CurlHandle(Empty) noexcept {}
+
     CurlHandle(const CurlHandle&) = delete;
     CurlHandle& operator=(const CurlHandle&) = delete;
+    CurlHandle(CurlHandle&&) noexcept = default;
+    CurlHandle& operator=(CurlHandle&&) noexcept = default;
 
-    // 允许移动
-    CurlHandle(CurlHandle&& other) noexcept;
-    CurlHandle& operator=(CurlHandle&& other) noexcept;
-
-    CURL* get() const { return handle_; }
-
-    // 重置句柄状态，便于复用
+    [[nodiscard]] CURL* get() const { return handle_.get(); }
     void reset();
-
-    // 检查句柄是否有效
-    bool valid() const { return handle_ != nullptr; }
+    [[nodiscard]] bool valid() const { return static_cast<bool>(handle_); }
 
 private:
-    CURL* handle_;
+    CurlPtr handle_{};
+    void apply_defaults();
 };
 
-/// 连接池返回的池化句柄 — RAII 归还
+/// Pool handle that returns itself to the thread-local cache.
 class PooledHandle {
 public:
-    PooledHandle() : handle_() {}
+    PooledHandle() : handle_(CurlHandle{CurlHandle::Empty{}}) {}
     explicit PooledHandle(CurlHandle handle) : handle_(std::move(handle)) {}
     ~PooledHandle();
 
     PooledHandle(const PooledHandle&) = delete;
     PooledHandle& operator=(const PooledHandle&) = delete;
-
-    PooledHandle(PooledHandle&& other) noexcept : handle_(std::move(other.handle_)) {}
+    PooledHandle(PooledHandle&& other) noexcept
+        : handle_(std::exchange(other.handle_, CurlHandle{CurlHandle::Empty{}})) {}
     PooledHandle& operator=(PooledHandle&& other) noexcept {
         if (this != &other) {
             return_to_pool();
-            handle_ = std::move(other.handle_);
+            handle_ = std::exchange(other.handle_, CurlHandle{CurlHandle::Empty{}});
         }
         return *this;
     }
 
-    CURL* get() const { return handle_.get(); }
-    bool valid() const { return handle_.valid(); }
+    [[nodiscard]] CURL* get() const { return handle_.get(); }
+    [[nodiscard]] bool valid() const { return handle_.valid(); }
 
 private:
-    CurlHandle handle_;
+    CurlHandle handle_{};
     void return_to_pool();
 };
 
-/// 线程局部的 CURL 连接池
-/// 每个线程维护一个 CURL 句柄缓存，避免锁开销
 class ConnectionPool {
 public:
     static ConnectionPool& instance();
 
-    /// 获取一个 CURL 句柄（从线程局部缓存或新建）
     PooledHandle acquire();
-
-    /// 归还句柄到线程局部缓存
     void release(CurlHandle handle);
-
-    /// 清除当前线程的句柄缓存（在 curl_global_cleanup 前调用）
     static void clear_thread_cache();
 
-    /// 统计信息
     struct Stats {
         size_t total_acquisitions = 0;
         size_t cache_hits = 0;
         size_t cache_misses = 0;
     };
 
-    Stats get_stats() const;
+    [[nodiscard]] Stats get_stats() const;
 
 private:
     ConnectionPool() = default;
-    ~ConnectionPool();
 
     mutable std::mutex stats_mutex_;
-    Stats stats_;
+    Stats stats_{};
 
     void record_hit();
     void record_miss();
 
-    // thread_local 句柄缓存（空 std::optional 表示已借出）
     static thread_local std::optional<CurlHandle> tls_handle_;
 };
 
-/// 初始化 CURL 库（程序启动时调用一次）
-bool initialize();
-
-/// 清理 CURL 库（程序退出时调用）
+[[nodiscard]] bool initialize();
 void cleanup();
-
-/// 便捷函数：获取线程局部的池化 CURL 句柄
 PooledHandle get_handle();
 
 } // namespace curl_pool

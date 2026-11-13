@@ -1,88 +1,78 @@
 #pragma once
+
+#include <cstdint>
+#include <filesystem>
+#include <format>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
-#include <cstdint>
-#include <optional>
 
 namespace config {
 
-// Configuration defaults
 inline constexpr std::string_view CACHE_FILENAME = "cache.lastip";
 inline constexpr std::string_view ZONEID_CACHE_FILENAME = "cache.zoneid.json";
 inline constexpr int DEFAULT_CLOUDFLARE_TTL = 180;
 inline constexpr int DEFAULT_ALIYUN_TTL = 600;
 inline constexpr int MAX_API_RETRIES = 2;
 inline constexpr int API_TIMEOUT_SECONDS = 15;
-
-// HTTP client defaults
 inline constexpr int HTTP_TIMEOUT_SECONDS = 15;
 inline constexpr int HTTP_MAX_RETRIES = 3;
 inline constexpr int DEFAULT_TIMEOUT_SECONDS = 300;
-
-// IPv6 constants
 inline constexpr uint32_t ND6_INFINITE_LIFETIME = 0xFFFFFFFFU;
-inline constexpr long INFINITE_LIFETIME_SECONDS = 1000000000000L; // 1e12
+inline constexpr long INFINITE_LIFETIME_SECONDS = 1000000000000L;
 
 struct IPSource {
-    std::string              interface_name; ///< network interface (optional)
-    std::vector<std::string> fallback_urls;  ///< fallback HTTP API URLs
+    std::string interface_name;
+    std::vector<std::string> fallback_urls;
 };
 
 struct RecordConfig {
-    std::string provider;
-    std::string zone;
-    std::string name;         ///< RR label; "@" is the zone apex
+    std::string provider{};
+    std::string zone{};
+    std::string name{};          ///< RR label; "@" is the zone apex
     std::string type = "AAAA";
-    int         ttl       = 0;
-    bool        proxied   = false; ///< Cloudflare CDN proxy only
-    bool        use_proxy = false;
-
-    std::string api_token;          ///< Cloudflare
-    std::string zone_id;            ///< Cloudflare (auto-fetched if empty)
-    std::string access_key_id;      ///< Aliyun
-    std::string access_key_secret;  ///< Aliyun
+    int ttl = 0;
+    bool proxied = false;
+    bool use_proxy = false;
+    std::string api_token{};
+    std::string zone_id{};
+    std::string access_key_id{};
+    std::string access_key_secret{};
 };
 
 struct Config {
-    IPSource                  ip_source;
-    std::string               proxy;       ///< global proxy for DNS API
+    IPSource ip_source;
+    std::string proxy;
+    std::string netns;         ///< empty: discover on the host. Linux name or /run/netns path.
     std::vector<RecordConfig> records;
 };
 
 /// Display name. Apex records are the zone itself, not "@.zone".
-inline std::string record_fqdn(const RecordConfig& record) {
+[[nodiscard]] inline std::string record_fqdn(const RecordConfig& record) {
     if (record.name == "@") return record.zone;
-    return record.name + "." + record.zone;
+    return std::format("{}.{}", record.name, record.zone);
 }
 
-/// Read and validate config JSON. Returns nullopt on any error.
-std::optional<Config> read_config(const std::string& path);
+[[nodiscard]] std::optional<Config> read_config(const std::filesystem::path& path);
 
-/// Returns the cache file path next to the config file (or in work_dir)
-std::string get_cache_file_path(const std::string& config_abs_path,
-                                 const std::string& work_dir);
+/// Replace netns when the CLI passed a non-empty value, then validate it.
+[[nodiscard]] bool apply_netns_override(Config& cfg, std::string_view netns_name);
 
-/// Read last IP from cache file (empty string on miss)
-std::string read_last_ip(const std::string& path);
+[[nodiscard]] std::filesystem::path get_cache_file_path(const std::filesystem::path& config_abs_path,
+                                                        const std::filesystem::path& work_dir);
 
-/// Write IP to cache file
-bool write_last_ip(const std::string& path, const std::string& ip);
+[[nodiscard]] std::string read_last_ip(const std::filesystem::path& path);
+[[nodiscard]] bool write_last_ip(const std::filesystem::path& path, std::string_view ip);
 
-/// Effective proxy URL for a record (empty = none)
-std::string get_record_proxy(const Config& cfg, const RecordConfig& record);
+[[nodiscard]] std::string get_record_proxy(const Config& cfg, const RecordConfig& record);
+[[nodiscard]] int get_record_ttl(const RecordConfig& record);
 
-/// Effective TTL for a record
-int get_record_ttl(const RecordConfig& record);
-
-/// Read ZoneID cache (map of zone -> zone_id)
-std::map<std::string, std::string> read_zone_id_cache(const std::string& path);
-
-/// Update ZoneID cache for a specific zone
-bool update_zone_id_cache(const std::string& path, const std::string& zone, const std::string& zone_id);
-
-/// Zone ID cache next to the IP cache file.
-std::string get_zone_id_cache_path(const std::string& cache_file_path);
+[[nodiscard]] std::map<std::string, std::string> read_zone_id_cache(const std::filesystem::path& path);
+[[nodiscard]] bool update_zone_id_cache(const std::filesystem::path& path,
+                                        std::string_view zone,
+                                        std::string_view zone_id);
+[[nodiscard]] std::filesystem::path get_zone_id_cache_path(const std::filesystem::path& cache_file_path);
 
 } // namespace config

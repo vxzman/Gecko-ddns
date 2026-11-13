@@ -1,28 +1,24 @@
-// Shared platform-independent IPv6 address retrieval:
-//   - HTTP API getter (fallback when platform interface API fails)
-//   - select_best (choose best candidate from results)
-//
-// Platform-specific get_from_interface() implementations live in:
-//   ip_getter_linux.cpp    (Linux, Netlink socket)
-//   ip_getter_freebsd.cpp  (FreeBSD, Netlink socket)
-
 #include "ip_getter.hpp"
+
 #include "config.hpp"
-#include "curl_pool.hpp"
 #include "http_client.hpp"
 #include "log.hpp"
 #include "signal.hpp"
+#include "text.hpp"
 
-#include <curl/curl.h>
+#include <arpa/inet.h>
 
 #include <algorithm>
-#include <arpa/inet.h>
-#include <cctype>
+#include <array>
+#include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cstring>
-#include <future>
+#include <format>
+#include <memory>
+#include <optional>
 #include <ranges>
-#include <sstream>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <utility>
@@ -30,162 +26,147 @@
 
 namespace ip_getter {
 
-// ─── HTTP API getter ──────────────────────────────────────────────────────────
-
 namespace {
 
-static std::string fetch_ip_from_url(const std::string& url, std::string& err) {
-    auto result = HttpClient::get(url, {}, config::HTTP_TIMEOUT_SECONDS, config::HTTP_MAX_RETRIES);
+std::string fetch_ip_from_url(std::string_view url, std::string& err, std::stop_token stop) {
+    auto result = HttpClient::get(url, {}, config::HTTP_TIMEOUT_SECONDS, config::HTTP_MAX_RETRIES, std::move(stop));
     if (!result) {
-        err = "HTTP error: " + result.error();
+        err = std::format("HTTP error: {}", result.error());
         return "";
     }
 
-    const std::string& body = result->body;
-
-    // Strip carriage returns (handle \r\n line endings)
     std::string cleaned;
-    cleaned.reserve(body.size());
-    for (char c : body) {
-        if (c != '\r') cleaned += c;
+    cleaned.reserve(result->body.size());
+    for (const char c : result->body) {
+        if (c != '\r') cleaned.push_back(c);
     }
 
-    // Extract first non-empty line
-    std::istringstream stream(cleaned);
-    std::string line;
     std::string ip;
-    while (std::getline(stream, line)) {
-        // Trim whitespace from both ends
-        size_t start = line.find_first_not_of(" \t\n\v\f\r");
-        if (start == std::string::npos) continue;  // blank line
-        size_t end = line.find_last_not_of(" \t\n\v\f\r");
-        ip = line.substr(start, end - start + 1);
+    for (auto&& part : cleaned | std::views::split('\n')) {
+        const std::string piece(part.begin(), part.end());
+        const std::string trimmed{text::trim(piece)};
+        if (trimmed.empty()) continue;
+        ip = trimmed;
         break;
     }
-
     if (ip.empty()) {
         err = "Empty response from API";
         return "";
     }
 
-    // Validate that the result is a well-formed IPv6 address
-    unsigned char addr_buf[sizeof(struct in6_addr)];
-    if (inet_pton(AF_INET6, ip.c_str(), addr_buf) != 1) {
-        err = "API returned non-IPv6 address: '" + ip + "'";
+    std::array<unsigned char, sizeof(in6_addr)> addr_buf{};
+    if (inet_pton(AF_INET6, ip.c_str(), addr_buf.data()) != 1) {
+        err = std::format("API returned non-IPv6 address: '{}'", ip);
         logger::warning("API {} returned invalid IPv6: '{}'", url, ip);
         return "";
     }
 
-    // Normalize to canonical IPv6 format (handles ::, leading zeros, etc.)
-    char normalized[INET6_ADDRSTRLEN];
-    if (inet_ntop(AF_INET6, addr_buf, normalized, sizeof(normalized)) == nullptr) {
-        err = "Failed to normalize IPv6 address: " + std::string(strerror(errno));
+    std::array<char, INET6_ADDRSTRLEN> normalized{};
+    if (inet_ntop(AF_INET6, addr_buf.data(), normalized.data(), static_cast<socklen_t>(normalized.size())) == nullptr) {
+        err = std::format("Failed to normalize IPv6 address: {}", std::strerror(errno));
         return "";
     }
-
-    return std::string(normalized);
+    return std::string{normalized.data()};
 }
 
-} // anonymous namespace
+} // namespace
 
-std::expected<std::vector<IPv6Info>, std::string> get_from_apis(const std::vector<std::string>& urls, int timeout_sec) {
-    if (urls.empty()) { return std::unexpected("No API URLs configured"); }
+std::expected<std::vector<IPv6Info>, std::string>
+get_from_apis(const std::vector<std::string>& urls, int timeout_sec) {
+    if (urls.empty()) return std::unexpected("No API URLs configured");
 
-    struct ApiResult { std::string ip; std::string error; };
-    struct Task {
-        std::thread thread;
-        std::future<ApiResult> future;
-        std::string url;
-        bool done = false;
+    struct Slot {
+        std::string ip;
+        std::string error;
+        std::atomic<bool> done{false};
+        bool noted = false;
     };
-    std::vector<Task> tasks;
-    tasks.reserve(urls.size());
 
-    for (size_t i = 0; i < urls.size(); ++i) {
+    std::vector<std::unique_ptr<Slot>> slots;
+    slots.reserve(urls.size());
+    for (std::size_t i = 0; i < urls.size(); ++i) slots.push_back(std::make_unique<Slot>());
+
+    std::vector<std::jthread> workers;
+    workers.reserve(urls.size());
+    for (std::size_t i = 0; i < urls.size(); ++i) {
         logger::info("Querying API: {}", urls[i]);
-        std::packaged_task<ApiResult()> task([url = urls[i]]() -> ApiResult {
-            ApiResult r;
-            r.ip = fetch_ip_from_url(url, r.error);
-            return r;
+        workers.emplace_back([&, i](std::stop_token stop) {
+            if (stop.stop_requested() || is_shutdown_requested()) {
+                slots[i]->error = "stopped";
+                slots[i]->done.store(true, std::memory_order_release);
+                return;
+            }
+            std::string err;
+            std::string ip = fetch_ip_from_url(urls[i], err, stop);
+            if (!ip.empty()) slots[i]->ip = std::move(ip);
+            else slots[i]->error = std::move(err);
+            slots[i]->done.store(true, std::memory_order_release);
         });
-        auto future = task.get_future();
-        tasks.push_back({std::thread(std::move(task)), std::move(future), urls[i]});
     }
 
-    auto start_time = std::chrono::steady_clock::now();
-    size_t completed = 0;
-    const size_t total = tasks.size();
+    const auto start = std::chrono::steady_clock::now();
     std::string last_error;
+    std::optional<std::size_t> winner;
 
-    // Poll ALL futures concurrently — return on first success
-    while (completed < total) {
-        // Check shutdown and total timeout
+    auto cancel = [&] {
+        for (auto& worker : workers) worker.request_stop();
+        workers.clear();
+    };
+
+    while (!winner.has_value()) {
         if (is_shutdown_requested()) {
             logger::warning("Shutdown requested, aborting API queries");
-            // Join completed, detach unfinished
-            for (auto& t : tasks) {
-                if (!t.thread.joinable()) continue;
-                if (t.done) t.thread.join();   // finished → instant join
-                else        t.thread.detach(); // unfinished → detach
-            }
+            cancel();
             return std::unexpected("Shutdown requested during API query");
         }
         if (timeout_sec > 0) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - start_time).count();
+            const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start).count();
             if (elapsed >= timeout_sec) {
                 logger::warning("API query timeout ({}s)", timeout_sec);
-                for (auto& t : tasks) {
-                    if (!t.thread.joinable()) continue;
-                    if (t.done) t.thread.join();
-                    else        t.thread.detach();
-                }
+                cancel();
                 return std::unexpected("API query timeout");
             }
         }
 
-        // Check all unfinished futures
-        for (auto& t : tasks) {
-            if (t.done) continue;
-            auto status = t.future.wait_for(std::chrono::milliseconds(200));
-            if (status != std::future_status::ready) continue;
-
-            t.done = true;
-            ++completed;
-            auto result = t.future.get();
-
-            if (!result.ip.empty()) {
-                // Success! Join completed thread, detach others, return immediately
-                t.thread.join();  // task already finished, join is instant
-                logger::info("API {} succeeded: {}", t.url, result.ip);
-                for (auto& other : tasks) {
-                    if (&other != &t && other.thread.joinable()) other.thread.detach();
+        std::size_t finished = 0;
+        for (std::size_t i = 0; i < slots.size(); ++i) {
+            if (!slots[i]->done.load(std::memory_order_acquire)) continue;
+            ++finished;
+            if (!slots[i]->noted) {
+                slots[i]->noted = true;
+                if (slots[i]->ip.empty()) {
+                    logger::error("API {} failed: {}", urls[i], slots[i]->error);
+                    last_error = slots[i]->error;
                 }
-                IPv6Info info;
-                info.ip            = result.ip;
-                info.preferred_lft = config::INFINITE_LIFETIME_SECONDS;
-                info.valid_lft     = config::INFINITE_LIFETIME_SECONDS;
-                populate_info(&info);
-                return std::vector<IPv6Info>{info};
             }
-
-            // This API failed — log and keep waiting for others
-            logger::error("API {} failed: {}", t.url, result.error);
-            last_error = result.error;
+            if (!slots[i]->ip.empty()) {
+                winner = i;
+                break;
+            }
         }
-
-        // Small sleep to avoid busy-waiting
+        if (winner.has_value()) break;
+        if (finished == slots.size()) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    // All tasks completed but none succeeded — join all threads before return
-    for (auto& t : tasks) {
-        if (t.thread.joinable()) t.thread.join();
+    if (winner.has_value()) {
+        const std::string ip = slots[*winner]->ip;
+        const std::string url = urls[*winner];
+        cancel();
+        logger::info("API {} succeeded: {}", url, ip);
+        IPv6Info info{
+            .ip = ip,
+            .preferred_lft = config::INFINITE_LIFETIME_SECONDS,
+            .valid_lft = config::INFINITE_LIFETIME_SECONDS,
+        };
+        populate_info(&info);
+        return std::vector<IPv6Info>{std::move(info)};
     }
-    return std::unexpected("All API requests failed: " + last_error);
-}
 
-// ─── Select best ─────────────────────────────────────────────────────────────
+    cancel();
+    return std::unexpected(std::format("All API requests failed: {}", last_error));
+}
 
 std::expected<std::string, std::string> select_best(const std::vector<IPv6Info>& infos) {
     auto candidates = infos | std::views::filter([](const IPv6Info& info) { return info.is_candidate; });

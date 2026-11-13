@@ -4,215 +4,196 @@
 #include "ip_getter.hpp"
 #include "curl_pool.hpp"
 #include "signal.hpp"
+#include "netns_probe.hpp"
 #include "provider/cloudflare.hpp"
 #include "provider/aliyun.hpp"
 
 #include <argparse/argparse.hpp>
 
-#include <csignal>
-#include <cstdlib>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <format>
 #include <iostream>
-#include <map>
-#include <mutex>
+#include <print>
+#include <ranges>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifndef APP_VERSION
-#  define APP_VERSION "dev"
+#define APP_VERSION "dev"
 #endif
 #ifndef APP_COMMIT
-#  define APP_COMMIT ""
+#define APP_COMMIT ""
 #endif
 #ifndef APP_BUILD_DATE
-#  define APP_BUILD_DATE ""
+#define APP_BUILD_DATE ""
 #endif
 
-static void print_version() {
-    std::cout << "gecko-ddns " APP_VERSION "\n";
-    if (std::string(APP_COMMIT).size() > 0)
-        std::cout << "commit: " APP_COMMIT "\n";
-    if (std::string(APP_BUILD_DATE).size() > 0)
-        std::cout << "built:  " APP_BUILD_DATE "\n";
-    if (std::string(APP_COMPILER).size() > 0)
-        std::cout << "compiler: " APP_COMPILER "\n";
+namespace {
+
+void print_version() {
+    std::println("gecko-ddns {}", APP_VERSION);
+    if (std::string_view{APP_COMMIT}.size() > 0) std::println("commit: {}", APP_COMMIT);
+    if (std::string_view{APP_BUILD_DATE}.size() > 0) std::println("built:  {}", APP_BUILD_DATE);
+    if (std::string_view{APP_COMPILER}.size() > 0) std::println("compiler: {}", APP_COMPILER);
 }
 
-// ─── Update Result ─────────────────────────────────────────────────────────────
-
 struct UpdateResult {
-    std::string record_name;
-    bool        success = false;
-    std::string error;
+    std::string record_name{};
+    bool success = false;
+    std::string error{};
 };
 
-// ─── Cloudflare Record Update ──────────────────────────────────────────────────
+struct CurrentIp {
+    std::string ip{};
+    int failure_code = 1;
+};
 
-static UpdateResult update_cloudflare_record(
-    const config::Config&       cfg,
-    const config::RecordConfig& rec,
-    const std::string&          current_ip,
-    const std::string&          zone_id_cache_file) {
+std::vector<std::string> split_csv(std::string_view csv) {
+    std::vector<std::string> urls;
+    if (csv.empty()) return urls;
+    for (auto&& part : csv | std::views::split(',')) {
+        std::string url(part.begin(), part.end());
+        if (!url.empty()) urls.push_back(std::move(url));
+    }
+    return urls;
+}
 
-    UpdateResult result;
-    result.record_name = config::record_fqdn(rec);
-
+UpdateResult update_cloudflare_record(const config::Config& cfg,
+                                      const config::RecordConfig& rec,
+                                      const std::string& current_ip,
+                                      const std::filesystem::path& zone_id_cache_file) {
+    UpdateResult result{.record_name = config::record_fqdn(rec)};
     logger::info("Processing record: {} ({})", result.record_name, rec.provider);
 
-    std::string proxy_url = config::get_record_proxy(cfg, rec);
+    const std::string proxy_url = config::get_record_proxy(cfg, rec);
     auto provider = provider::CloudflareProvider(rec.api_token, proxy_url);
     std::string zone_id = rec.zone_id;
+    const int ttl = config::get_record_ttl(rec);
 
-    int ttl = config::get_record_ttl(rec);
-    bool proxied = rec.proxied;
-
-    // Auto-fetch zone_id if not set (try cache first)
     if (zone_id.empty()) {
-        auto cached = config::read_zone_id_cache(zone_id_cache_file);
-        auto it = cached.find(rec.zone);
+        const auto cached = config::read_zone_id_cache(zone_id_cache_file);
+        const auto it = cached.find(rec.zone);
         if (it != cached.end() && !it->second.empty()) {
             zone_id = it->second;
             logger::debug("Zone ID loaded from cache for {}: {}", rec.zone, zone_id);
         }
     }
-
     if (zone_id.empty()) {
         logger::info("Zone ID not configured, fetching for zone: {}", rec.zone);
-        auto z_res = provider.get_zone_id(rec.zone, "");
-        if (!z_res) {
-            result.error = "Failed to get Zone ID: " + z_res.error();
+        auto fetched = provider.get_zone_id(rec.zone, "");
+        if (!fetched) {
+            result.error = std::format("Failed to get Zone ID: {}", fetched.error());
             logger::error("Record {}: {}", result.record_name, result.error);
             return result;
         }
-        zone_id = *z_res;
+        zone_id = std::move(*fetched);
         logger::info("Zone ID fetched: {}", zone_id);
-
         if (!config::update_zone_id_cache(zone_id_cache_file, rec.zone, zone_id)) {
             logger::warning("Warning: failed to save Zone ID cache");
         }
     }
 
-    auto ok = provider.upsert_record_with_zone_id(rec.zone, rec.name, current_ip, zone_id, ttl, proxied,
-                                                    rec.type.empty() ? "AAAA" : rec.type);
+    const auto ok = provider.upsert_record_with_zone_id(
+        rec.zone, rec.name, current_ip, zone_id, ttl, rec.proxied, rec.type.empty() ? "AAAA" : rec.type);
     if (!ok) {
-        result.error = "Cloudflare upsert failed: " + ok.error();
+        result.error = std::format("Cloudflare upsert failed: {}", ok.error());
         logger::error("Failed to update {}", result.record_name);
         return result;
     }
-
     logger::success("Record {} updated successfully", result.record_name);
     result.success = true;
     return result;
 }
 
-// ─── Aliyun Record Update ──────────────────────────────────────────────────────
-
-static UpdateResult update_aliyun_record(
-    const config::Config&       cfg,
-    const config::RecordConfig& rec,
-    const std::string&          current_ip) {
-
-    UpdateResult result;
-    result.record_name = config::record_fqdn(rec);
-
+UpdateResult update_aliyun_record(const config::Config& cfg,
+                                  const config::RecordConfig& rec,
+                                  const std::string& current_ip) {
+    UpdateResult result{.record_name = config::record_fqdn(rec)};
     logger::info("Processing record: {} ({})", result.record_name, rec.provider);
 
-    std::string proxy_url = config::get_record_proxy(cfg, rec);
-    int ttl = config::get_record_ttl(rec);
+    const std::string proxy_url = config::get_record_proxy(cfg, rec);
+    const int ttl = config::get_record_ttl(rec);
     auto provider = provider::AliyunProvider(rec.access_key_id, rec.access_key_secret, proxy_url);
-    std::map<std::string, std::string> extra;
-    if (!rec.type.empty()) extra["type"] = rec.type;
-
-    auto ok = provider.upsert_record(rec.zone, rec.name, current_ip, ttl, extra);
+    const provider::AliyunOpts opts{.type = rec.type.empty() ? std::string{"AAAA"} : rec.type};
+    const auto ok = provider.upsert_record(rec.zone, rec.name, current_ip, ttl, opts);
     if (!ok) {
-        result.error = "Aliyun upsert failed: " + ok.error();
+        result.error = std::format("Aliyun upsert failed: {}", ok.error());
         logger::error("Failed to update {}", result.record_name);
         return result;
     }
-
     logger::success("Record {} updated successfully", result.record_name);
     result.success = true;
     return result;
 }
 
-// ─── Single Record Update ──────────────────────────────────────────────────────
-
-static UpdateResult update_single_record(
-    const config::Config&       cfg,
-    const config::RecordConfig& rec,
-    const std::string&          current_ip,
-    const std::string&          zone_id_cache_file,
-    const std::atomic<bool>&    timed_out) {
-
-    UpdateResult result;
-    result.record_name = config::record_fqdn(rec);
-
-    if (timed_out.load() || is_shutdown_requested()) {
+UpdateResult update_single_record(const config::Config& cfg,
+                                  const config::RecordConfig& rec,
+                                  const std::string& current_ip,
+                                  const std::filesystem::path& zone_id_cache_file,
+                                  const std::atomic<bool>& timed_out,
+                                  std::stop_token stop) {
+    UpdateResult result{.record_name = config::record_fqdn(rec)};
+    if (timed_out.load() || stop.stop_requested() || is_shutdown_requested()) {
         result.error = "shutdown requested";
         return result;
     }
-
-    if (rec.provider == "cloudflare") {
-        return update_cloudflare_record(cfg, rec, current_ip, zone_id_cache_file);
-    } else if (rec.provider == "aliyun") {
-        return update_aliyun_record(cfg, rec, current_ip);
-    } else {
-        result.error = "unsupported provider: " + rec.provider;
-        logger::error("Record {}: {}", result.record_name, result.error);
-        return result;
-    }
+    if (rec.provider == "cloudflare") return update_cloudflare_record(cfg, rec, current_ip, zone_id_cache_file);
+    if (rec.provider == "aliyun") return update_aliyun_record(cfg, rec, current_ip);
+    result.error = std::format("unsupported provider: {}", rec.provider);
+    logger::error("Record {}: {}", result.record_name, result.error);
+    return result;
 }
 
-// ─── Helper Functions ──────────────────────────────────────────────────────────
+CurrentIp get_current_ip(const config::Config& cfg, int timeout_sec) {
+    const int query_timeout = timeout_sec > 0 ? std::max(10, timeout_sec / 2) : 0;
+    if (!cfg.netns.empty()) {
+#if defined(__linux__)
+        auto probed = netns::run_probe(cfg.netns, cfg.ip_source.interface_name,
+                                       cfg.ip_source.fallback_urls, query_timeout);
+        if (!probed) return CurrentIp{.failure_code = probed.error()};
+        return CurrentIp{.ip = std::move(probed->ip), .failure_code = 0};
+#else
+        logger::error("netns is only supported on Linux");
+        return {};
+#endif
+    }
 
-static std::string get_current_ip(const config::Config& cfg, int timeout_sec) {
-    bool use_interface = !cfg.ip_source.interface_name.empty();
-
-    // use a subset of total timeout for the initial query so fallback has time
-    int query_timeout = timeout_sec > 0 ? std::max(10, timeout_sec / 2) : 0;
-
-    auto infos_res = use_interface
+    const bool use_interface = !cfg.ip_source.interface_name.empty();
+    auto infos = use_interface
         ? ip_getter::get_from_interface(cfg.ip_source.interface_name)
         : ip_getter::get_from_apis(cfg.ip_source.fallback_urls, query_timeout);
-
-    // Only fallback to APIs when the primary source was an interface
-    if (!infos_res && use_interface) {
-        logger::info("Interface IP source failed: {}. Trying API fallback...", infos_res.error());
-        infos_res = ip_getter::get_from_apis(cfg.ip_source.fallback_urls, query_timeout);
+    if (!infos && use_interface) {
+        logger::info("Interface IP source failed: {}. Trying API fallback...", infos.error());
+        infos = ip_getter::get_from_apis(cfg.ip_source.fallback_urls, query_timeout);
     }
-
-    if (!infos_res) {
-        return "";
-    }
-
-    auto ip_res = ip_getter::select_best(*infos_res);
-    if (!ip_res) {
-        return "";
-    }
-    return *ip_res;
+    auto ip = infos.and_then([](const std::vector<ip_getter::IPv6Info>& found) {
+        return ip_getter::select_best(found);
+    });
+    if (!ip) return {};
+    return CurrentIp{.ip = std::move(*ip), .failure_code = 0};
 }
 
-/// Result of cache check: whether to skip and the last known IP (from parsed cache)
 struct CacheCheckResult {
     bool skip = false;
     std::string last_ip;
 };
 
-/// Returns skip decision + last known IP (avoids parsing cache file twice)
-static CacheCheckResult check_cache_and_decide_skip(const std::string& current_ip,
-                                                     const std::string& cache_file,
-                                                     bool ignore_cache) {
-    auto cache_data = cache::parse_cache_file(cache_file);
-    CacheCheckResult result;
-    result.last_ip = cache_data.last_ip;
-
+CacheCheckResult check_cache_and_decide_skip(const std::string& current_ip,
+                                             const std::filesystem::path& cache_file,
+                                             bool ignore_cache) {
+    const auto cache_data = cache::parse_cache_file(cache_file);
+    CacheCheckResult result{.last_ip = cache_data.last_ip};
     if (ignore_cache) {
         logger::info("Ignoring cache (--ignore), forcing DDNS update");
         return result;
     }
-
     if (!result.last_ip.empty()) {
         if (result.last_ip == current_ip) {
             logger::info("IP has not changed since last run: {} — skipping DDNS update", current_ip);
@@ -224,208 +205,231 @@ static CacheCheckResult check_cache_and_decide_skip(const std::string& current_i
     return result;
 }
 
-static void update_records_parallel(
-    const config::Config& cfg,
-    const std::string&    current_ip,
-    const std::string&    zone_id_cache_file,
-    int                   timeout_sec,
-    int&                  success_count,
-    int&                  fail_count) {
-
+void update_records_parallel(const config::Config& cfg,
+                             const std::string& current_ip,
+                             const std::filesystem::path& zone_id_cache_file,
+                             int timeout_sec,
+                             int& success_count,
+                             int& fail_count) {
     std::vector<UpdateResult> results(cfg.records.size());
-    // Pre-populate with timeout error — completed threads will overwrite
-    for (size_t i = 0; i < cfg.records.size(); ++i) {
+    for (std::size_t i = 0; i < cfg.records.size(); ++i) {
         results[i].record_name = config::record_fqdn(cfg.records[i]);
         results[i].error = "timeout or shutdown before completion";
     }
-    std::vector<std::thread> threads;
+
+    std::atomic<bool> timed_out{false};
+    std::atomic<std::size_t> finished{0};
+    std::vector<std::jthread> threads;
     threads.reserve(cfg.records.size());
-
-    std::atomic<bool> timed_out = false;
-
-    for (size_t i = 0; i < cfg.records.size(); ++i) {
-        threads.emplace_back([&, i]() {
-            results[i] = update_single_record(cfg, cfg.records[i], current_ip, zone_id_cache_file, timed_out);
+    for (std::size_t i = 0; i < cfg.records.size(); ++i) {
+        threads.emplace_back([&, i](std::stop_token stop) {
+            struct Done {
+                std::atomic<std::size_t>& counter;
+                ~Done() { counter.fetch_add(1, std::memory_order_relaxed); }
+            } done{finished};
+            results[i] = update_single_record(cfg, cfg.records[i], current_ip, zone_id_cache_file, timed_out, stop);
         });
     }
 
-    auto start = std::chrono::steady_clock::now();
-
-    // Join all threads, but stop waiting after timeout or shutdown
-    for (auto& t : threads) {
-        if (timed_out.load() || is_shutdown_requested()) {
+    const auto start = std::chrono::steady_clock::now();
+    while (finished.load(std::memory_order_relaxed) < cfg.records.size()) {
+        if (is_shutdown_requested()) {
+            timed_out.store(true);
+            for (auto& thread : threads) thread.request_stop();
             break;
         }
-
-        auto elapsed = std::chrono::steady_clock::now() - start;
-        if (elapsed >= std::chrono::seconds(timeout_sec)) {
+        if (std::chrono::steady_clock::now() - start >= std::chrono::seconds(timeout_sec)) {
             timed_out.store(true);
+            for (auto& thread : threads) thread.request_stop();
             logger::warning("Timeout reached ({} seconds), forcing shutdown", timeout_sec);
             break;
         }
-
-        t.join();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
+    threads.clear();
 
-    // Join any remaining threads (they should exit quickly after timed_out is set)
-    for (auto& t : threads) {
-        if (t.joinable()) {
-            t.join();
-        }
-    }
-
-    for (const auto& r : results) {
-        if (r.success) ++success_count; else ++fail_count;
+    for (const auto& result : results) {
+        if (result.success) ++success_count;
+        else ++fail_count;
     }
 }
 
-static void log_summary(int success_count, int fail_count) {
-    logger::info("Update completed: {} succeeded, {} failed", success_count, fail_count);
-}
-
-static void update_cache(const std::string& cache_file, const std::string& current_ip, const std::string& last_ip, bool ignore_cache) {
-    // Only write cache if not in --ignore mode
+void update_cache(const std::filesystem::path& cache_file,
+                  const std::string& current_ip,
+                  const std::string& last_ip,
+                  bool ignore_cache) {
     if (ignore_cache) return;
-    if (last_ip != current_ip) {
-        if (!cache::write_last_ip(cache_file, current_ip)) {
-            logger::warning("Warning: failed to write cache file");
-        }
+    if (last_ip != current_ip && !cache::write_last_ip(cache_file, current_ip)) {
+        logger::warning("Warning: failed to write cache file");
     }
 }
 
-// ─── Run command ──────────────────────────────────────────────────────────────
-
-static int run_cmd(const std::string& config_path, const std::string& dir_path,
-                   bool ignore_cache, int timeout_sec) {
-
-    // Initialize logger first so config validation errors are formatted properly
+int run_cmd(const std::filesystem::path& config_path,
+            const std::filesystem::path& dir_path,
+            bool ignore_cache,
+            int timeout_sec,
+            std::string_view netns_override) {
     if (!logger::init()) {
-        std::cerr << "Failed to initialize logging\n";
+        std::println(stderr, "Failed to initialize logging");
         return 1;
     }
-
     if (!curl_pool::initialize()) {
         logger::error("Failed to initialize libcurl");
         return 1;
     }
-
     setup_shutdown_handlers();
 
     std::error_code ec;
-    auto abs_config = std::filesystem::absolute(config_path, ec);
+    const auto abs_config = std::filesystem::absolute(config_path, ec);
     if (ec) {
         logger::error("Failed to resolve config path: {}", ec.message());
         curl_pool::cleanup();
         return 1;
     }
 
-    auto cfg_opt = config::read_config(abs_config.string());
+    auto cfg_opt = config::read_config(abs_config);
     if (!cfg_opt) {
         logger::error("Failed to load configuration");
         curl_pool::cleanup();
         return 1;
     }
     config::Config cfg = std::move(*cfg_opt);
-
-    // Determine base directory
-    std::string base_dir = dir_path;
-    if (base_dir.empty()) {
-        base_dir = abs_config.parent_path().string();
-    }
-
-    logger::info("gecko-ddns starting with {} record(s)", cfg.records.size());
-
-    // Get current IP (with timeout to avoid hanging on network issues)
-    std::string current_ip = get_current_ip(cfg, timeout_sec);
-    if (current_ip.empty()) {
-        logger::error("Failed to get current IP");
+    if (!config::apply_netns_override(cfg, netns_override)) {
+        logger::error("Failed to load configuration");
         curl_pool::cleanup();
         return 1;
     }
-    logger::info("Current IPv6 address: {}", current_ip);
 
-    // Cache — parse once and reuse
-    std::string cache_file = config::get_cache_file_path(abs_config.string(), base_dir);
-    auto cache_check = check_cache_and_decide_skip(current_ip, cache_file, ignore_cache);
+    const std::filesystem::path base_dir = dir_path.empty() ? abs_config.parent_path() : dir_path;
+    logger::info("gecko-ddns starting with {} record(s)", cfg.records.size());
+
+    const CurrentIp found = get_current_ip(cfg, timeout_sec);
+    if (found.ip.empty()) {
+        logger::error("Failed to get current IP");
+        curl_pool::cleanup();
+        return found.failure_code == 0 ? 1 : found.failure_code;
+    }
+    logger::info("Current IPv6 address: {}", found.ip);
+
+    const auto cache_file = config::get_cache_file_path(abs_config, base_dir);
+    const auto cache_check = check_cache_and_decide_skip(found.ip, cache_file, ignore_cache);
     if (cache_check.skip) {
         curl_pool::cleanup();
         return 0;
     }
 
-    // Update records
-    std::string zone_id_cache_file = config::get_zone_id_cache_path(cache_file);
-    int success_count = 0, fail_count = 0;
-    update_records_parallel(cfg, current_ip, zone_id_cache_file, timeout_sec, success_count, fail_count);
-    log_summary(success_count, fail_count);
-
-    // Update cache (reuse last_ip from earlier parse)
-    if (success_count > 0) {
-        update_cache(cache_file, current_ip, cache_check.last_ip, ignore_cache);
-    }
+    const auto zone_id_cache_file = config::get_zone_id_cache_path(cache_file);
+    int success_count = 0;
+    int fail_count = 0;
+    update_records_parallel(cfg, found.ip, zone_id_cache_file, timeout_sec, success_count, fail_count);
+    logger::info("Update completed: {} succeeded, {} failed", success_count, fail_count);
+    if (success_count > 0) update_cache(cache_file, found.ip, cache_check.last_ip, ignore_cache);
 
     curl_pool::cleanup();
     return fail_count > 0 ? 1 : 0;
 }
 
+int run_probe_cmd(std::string_view netns_name,
+                  std::string_view iface,
+                  std::string_view fallback_urls,
+                  int timeout_sec) {
+    logger::set_output(stderr);
+    if (!logger::init()) return 1;
+#if !defined(__linux__)
+    std::println(stderr, "netns is only supported on Linux");
+    (void)netns_name;
+    (void)iface;
+    (void)fallback_urls;
+    (void)timeout_sec;
+    return 1;
+#else
+    if (!curl_pool::initialize()) return 1;
+    const int code = netns::execute_probe(netns_name, iface, split_csv(fallback_urls), timeout_sec);
+    curl_pool::cleanup();
+    return code;
+#endif
+}
+
+} // namespace
+
 int main(int argc, char* argv[]) {
     argparse::ArgumentParser program("gecko-ddns", APP_VERSION);
     program.add_description("强大的动态 DNS 客户端 - 支持多域名多服务商");
 
-    argparse::ArgumentParser run_cmd_parser("run");
-    run_cmd_parser.add_description("运行 DDNS 更新");
-    run_cmd_parser.add_argument("-c", "--config")
+    argparse::ArgumentParser run_parser("run");
+    run_parser.add_description("运行 DDNS 更新");
+    run_parser.add_argument("-c", "--config")
         .help("配置文件路径 (JSON 格式)")
-        .default_value(std::string(""));
-    run_cmd_parser.add_argument("-d", "--dir")
+        .default_value(std::string{});
+    run_parser.add_argument("-d", "--dir")
         .help("工作目录（用于存放缓存和相对日志路径）")
-        .default_value(std::string(""));
-    run_cmd_parser.add_argument("-i", "--ignore")
+        .default_value(std::string{});
+    run_parser.add_argument("-i", "--ignore")
         .help("忽略缓存，强制更新且不写入缓存")
         .default_value(false)
         .implicit_value(true);
-    run_cmd_parser.add_argument("-t", "--timeout")
+    run_parser.add_argument("-t", "--timeout")
         .help("超时时间（秒），默认 300 秒")
-        .default_value(config::DEFAULT_TIMEOUT_SECONDS);
+        .default_value(config::DEFAULT_TIMEOUT_SECONDS)
+        .scan<'d', int>();
+    run_parser.add_argument("--netns")
+        .help("在指定 Linux network namespace 内探测 IPv6，覆盖配置文件")
+        .default_value(std::string{});
+
+    argparse::ArgumentParser probe_parser("__probe");
+    probe_parser.add_description("内部命令：在 netns 内探测 IPv6，向 stdout 写一行 JSON");
+    probe_parser.add_argument("--netns").help("netns 名或 /run/netns 下的路径").required();
+    probe_parser.add_argument("--iface").help("netns 内的网卡").required();
+    probe_parser.add_argument("--fallback-urls")
+        .help("逗号分隔的回显 URL")
+        .default_value(std::string{});
+    probe_parser.add_argument("--timeout")
+        .help("API 兜底的总超时（秒），0 表示不另加总超时")
+        .default_value(0)
+        .scan<'d', int>();
 
     argparse::ArgumentParser version_cmd("version");
     version_cmd.add_description("显示版本信息");
 
-    program.add_subparser(run_cmd_parser);
+    program.add_subparser(run_parser);
+    program.add_subparser(probe_parser);
     program.add_subparser(version_cmd);
 
     try {
         program.parse_args(argc, argv);
-    } catch (const std::exception& e) {
-        std::cerr << e.what() << "\n";
+    } catch (const std::exception& ex) {
+        std::println(stderr, "{}", ex.what());
         std::cerr << program;
         return 1;
     }
 
+    if (program.is_subcommand_used("__probe")) {
+        return run_probe_cmd(probe_parser.get<std::string>("--netns"),
+                             probe_parser.get<std::string>("--iface"),
+                             probe_parser.get<std::string>("--fallback-urls"),
+                             probe_parser.get<int>("--timeout"));
+    }
     if (program.is_subcommand_used("version")) {
         print_version();
         return 0;
     }
-
     if (program.is_subcommand_used("run")) {
-        std::string config_path = run_cmd_parser.get<std::string>("--config");
-        std::string dir_path    = run_cmd_parser.get<std::string>("--dir");
-
+        std::string config_path = run_parser.get<std::string>("--config");
+        const std::string dir_path = run_parser.get<std::string>("--dir");
         if (config_path.empty()) {
             if (dir_path.empty()) {
-                std::cerr << "错误：缺少配置文件参数 --config/-c，或请通过--dir/-d 指定工作目录以在其中查找 config.json\n";
-                std::cerr << run_cmd_parser;
+                std::println(stderr, "错误：缺少配置文件参数 --config/-c，或请通过--dir/-d 指定工作目录以在其中查找 config.json");
+                std::cerr << run_parser;
                 return 1;
             }
             config_path = (std::filesystem::path(dir_path) / "config.json").string();
             if (!std::filesystem::exists(config_path)) {
-                std::cerr << "配置文件未找到：" << config_path << "\n";
+                std::println(stderr, "配置文件未找到：{}", config_path);
                 return 1;
             }
         }
-
-        bool ignore_cache = run_cmd_parser.get<bool>("--ignore");
-        int timeout = run_cmd_parser.get<int>("--timeout");
-        return run_cmd(config_path, dir_path, ignore_cache, timeout);
+        return run_cmd(config_path, dir_path, run_parser.get<bool>("--ignore"),
+                       run_parser.get<int>("--timeout"), run_parser.get<std::string>("--netns"));
     }
 
     std::cerr << program;

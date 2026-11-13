@@ -1,61 +1,46 @@
 #include "cache.hpp"
+
+#include "text.hpp"
+
 #include <fstream>
 #include <string>
 #include <sys/stat.h>
 
 namespace cache {
 
-namespace {
-
-static std::string trim(const std::string& s) {
-    auto start = s.find_first_not_of(" \t\r\n");
-    if (start == std::string::npos) return "";
-    auto end = s.find_last_not_of(" \t\r\n");
-    return s.substr(start, end - start + 1);
-}
-
-} // namespace
-
-CacheFileData parse_cache_file(const std::string& path) {
+CacheFileData parse_cache_file(const std::filesystem::path& path) {
     CacheFileData data;
-
-    std::ifstream f(path);
-    if (!f.is_open()) return data;
+    std::ifstream file{path};
+    if (!file.is_open()) return data;
 
     std::string line;
-    while (std::getline(f, line)) {
-        line = trim(line);
-        if (line.empty() || line[0] == '#') continue;
+    while (std::getline(file, line)) {
+        const std::string trimmed{text::trim(line)};
+        if (trimmed.empty() || trimmed[0] == '#') continue;
 
         std::string ip;
-        auto space_pos = line.find(' ');
+        const auto space_pos = trimmed.find(' ');
         if (space_pos == std::string::npos) {
-            ip = line;
+            ip = trimmed;
         } else {
-            ip = trim(line.substr(space_pos + 1));
+            ip = std::string{text::trim(std::string_view{trimmed}.substr(space_pos + 1))};
         }
-        if (!ip.empty()) data.last_ip = ip;
+        if (!ip.empty()) data.last_ip = std::move(ip);
     }
-
     return data;
 }
 
-std::string read_last_ip(const std::string& path) {
+std::string read_last_ip(const std::filesystem::path& path) {
     return parse_cache_file(path).last_ip;
 }
 
-bool write_last_ip(const std::string& path, const std::string& ip) {
-    std::ofstream f(path, std::ios::trunc);
-    if (!f.is_open()) return false;
-
-    f << ip << '\n';
-    if (!f.good()) return false;
-    f.close();
-
-    if (chmod(path.c_str(), S_IRUSR | S_IWUSR) != 0) {
-        return false;
-    }
-    return true;
+bool write_last_ip(const std::filesystem::path& path, std::string_view ip) {
+    std::ofstream file{path, std::ios::trunc};
+    if (!file.is_open()) return false;
+    file << ip << '\n';
+    if (!file.good()) return false;
+    file.close();
+    return chmod(path.c_str(), S_IRUSR | S_IWUSR) == 0;
 }
 
 } // namespace cache

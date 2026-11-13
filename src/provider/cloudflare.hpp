@@ -1,7 +1,10 @@
 #pragma once
+
 #include "provider.hpp"
+
 #include <expected>
 #include <string>
+#include <string_view>
 
 namespace provider {
 
@@ -11,35 +14,37 @@ public:
 
     std::string name() const override { return "cloudflare"; }
 
-    /// Returns zone_id. If zone_id_hint is non-empty it is returned as-is;
-    /// otherwise the Cloudflare API is queried.
-    /// Returns error string on failure.
-    std::expected<std::string, std::string> get_zone_id(const std::string& zone_name,
-                                                         const std::string& zone_id_hint);
+    /// Returns zone_id. A non-empty hint is returned as-is.
+    [[nodiscard]] std::expected<std::string, std::string> get_zone_id(std::string_view zone_name,
+                                                                      std::string_view zone_id_hint);
 
-    std::expected<void, std::string> upsert_record(const std::string& zone,
-                                                   const std::string& record_name,
-                                                   const std::string& ip,
-                                                   int                ttl,
-                                                   const std::map<std::string, std::string>& extra) override;
+    [[nodiscard]] std::expected<void, std::string> upsert_record(std::string_view zone,
+                                                                 std::string_view record_name,
+                                                                 std::string_view ip,
+                                                                 int ttl,
+                                                                 const ProviderOpts& opts) override;
 
-    /// Overload that accepts a pre-resolved zone_id (avoids extra API call).
-    std::expected<void, std::string> upsert_record_with_zone_id(const std::string& zone,
-                                                                const std::string& record_name,
-                                                                const std::string& ip,
-                                                                const std::string& zone_id,
-                                                                int                ttl,
-                                                                bool               proxied,
-                                                                const std::string& type = "AAAA");
+    /// Upsert with a zone id that was already resolved or loaded from cache.
+    [[nodiscard]] std::expected<void, std::string> upsert_record_with_zone_id(std::string_view zone,
+                                                                              std::string_view record_name,
+                                                                              std::string_view ip,
+                                                                              std::string_view zone_id,
+                                                                              int ttl,
+                                                                              bool proxied,
+                                                                              std::string_view type = "AAAA");
 
 private:
     std::string api_token_;
     std::string proxy_url_;
 
-    struct HttpResponse { long code; std::string body; };
-    std::expected<HttpResponse, std::string> cf_request(const std::string& method,
-                                                        const std::string& url,
-                                                        const std::string& body_json = "");
+    struct HttpResponse {
+        long code = 0;
+        std::string body;
+    };
+
+    [[nodiscard]] std::expected<HttpResponse, std::string> cf_request(std::string_view method,
+                                                                      std::string_view url,
+                                                                      std::string_view body_json = {});
 };
 
 } // namespace provider

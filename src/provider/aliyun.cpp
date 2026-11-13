@@ -8,6 +8,7 @@
 #include <openssl/sha.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <format>
 #include <iomanip>
@@ -37,12 +38,12 @@ AliyunProvider::AliyunProvider(std::string access_key_id, std::string access_key
 // ─── HMAC-SHA1 Base64 ─────────────────────────────────────────────────────────
 
 std::string AliyunProvider::hmac_sha1_base64(const std::string& key, const std::string& data) {
-    unsigned char digest[EVP_MAX_MD_SIZE];
-    unsigned int  digest_len = 0;
+    std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
+    unsigned int digest_len = 0;
     HMAC(EVP_sha1(),
-         key.c_str(),  (int)key.size(),
+         key.c_str(), static_cast<int>(key.size()),
          reinterpret_cast<const unsigned char*>(data.c_str()), data.size(),
-         digest, &digest_len);
+         digest.data(), &digest_len);
 
     // Base64 encode
     static const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -81,7 +82,7 @@ std::string AliyunProvider::url_encode(const std::string& s) {
 std::string AliyunProvider::generate_signature(const std::map<std::string, std::string>& params) {
     // Sorted params (std::map is already sorted)
     auto encode_pair = [this](const auto& kv) {
-        return url_encode(kv.first) + '=' + url_encode(kv.second);
+        return std::format("{}={}", url_encode(kv.first), url_encode(kv.second));
     };
 
     std::string canonicalized;
@@ -90,8 +91,8 @@ std::string AliyunProvider::generate_signature(const std::map<std::string, std::
         canonicalized += pair_str;
     }
 
-    std::string string_to_sign = "GET&" + url_encode("/") + "&" + url_encode(canonicalized);
-    std::string key = access_key_secret_ + "&";
+    const std::string string_to_sign = std::format("GET&{}&{}", url_encode("/"), url_encode(canonicalized));
+    const std::string key = std::format("{}&", access_key_secret_);
     return hmac_sha1_base64(key, string_to_sign);
 }
 
@@ -122,7 +123,7 @@ auto AliyunProvider::sign_and_request(
 
     // Build URL using ranges to join parameters
     auto build_pair = [this](const auto& kv) {
-        return kv.first + '=' + url_encode(kv.second);
+        return std::format("{}={}", kv.first, url_encode(kv.second));
     };
 
     // Collect transformed pairs and join with '&'
@@ -135,7 +136,7 @@ auto AliyunProvider::sign_and_request(
         if (i > 0) qs += '&';
         qs += encoded_pairs[i];
     }
-    std::string url = "https://alidns.aliyuncs.com/?" + qs;
+    const std::string url = std::format("https://alidns.aliyuncs.com/?{}", qs);
 
     constexpr int MAX_RETRIES = 3;
     for (int attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
@@ -177,15 +178,15 @@ auto AliyunProvider::sign_and_request(
 
 // ─── Get record ID ────────────────────────────────────────────────────────────
 
-std::expected<std::string, std::string> AliyunProvider::get_record_id(const std::string& full_domain) {
+std::expected<std::string, std::string> AliyunProvider::get_record_id(std::string_view full_domain) {
     std::map<std::string, std::string> params{
         {"Action",    "DescribeSubDomainRecords"},
-        {"SubDomain", full_domain}
+        {"SubDomain", std::string{full_domain}}
     };
 
     auto resp = sign_and_request(params);
     if (!resp) {
-        std::string err = "Aliyun: request failed: " + resp.error();
+        const std::string err = std::format("Aliyun: request failed: {}", resp.error());
         logger::error("{}", err);
         return std::unexpected(err);
     }
@@ -193,7 +194,7 @@ std::expected<std::string, std::string> AliyunProvider::get_record_id(const std:
     try {
         auto j = json::parse(resp->body);
         if (j.contains("Code") && j["Code"].is_string() && !j["Code"].get<std::string>().empty()) {
-            std::string err = "Aliyun API error: " + j.value("Code", "") + " - " + j.value("Message", "");
+            const std::string err = std::format("Aliyun API error: {} - {}", j.value("Code", ""), j.value("Message", ""));
             logger::error("{}", err);
             return std::unexpected(err);
         }
@@ -208,7 +209,7 @@ std::expected<std::string, std::string> AliyunProvider::get_record_id(const std:
         }
         return records[0]["RecordId"].get<std::string>();
     } catch (const std::exception& e) {
-        std::string err = std::string("Aliyun: JSON parse error: ") + e.what();
+        const std::string err = std::format("Aliyun: JSON parse error: {}", e.what());
         logger::error("{}", err);
         return std::unexpected(err);
     }
@@ -216,39 +217,54 @@ std::expected<std::string, std::string> AliyunProvider::get_record_id(const std:
 
 // ─── Upsert record ────────────────────────────────────────────────────────────
 
-std::expected<void, std::string> AliyunProvider::upsert_record(const std::string& zone,
-                                    const std::string& record_name,
-                                    const std::string& ip,
-                                    int                ttl,
-                                    const std::map<std::string, std::string>& extra) {
-    std::string full_domain = (record_name == "@") ? zone : (record_name + "." + zone);
+std::expected<void, std::string> AliyunProvider::upsert_record(std::string_view zone,
+                                                               std::string_view record_name,
+                                                               std::string_view ip,
+                                                               int ttl,
+                                                               const ProviderOpts& opts) {
+    return std::visit(overloaded{
+        [&](const AliyunOpts& opt) -> std::expected<void, std::string> {
+            return upsert_with_type(zone, record_name, ip, ttl, opt.type.empty() ? std::string_view{"AAAA"} : std::string_view{opt.type});
+        },
+        [](const CloudflareOpts&) -> std::expected<void, std::string> {
+            return std::unexpected("Aliyun provider received Cloudflare options");
+        },
+    }, opts);
+}
 
-    std::string type = "AAAA";
-    auto tit = extra.find("type");
-    if (tit != extra.end() && !tit->second.empty()) type = tit->second;
+std::expected<void, std::string> AliyunProvider::upsert_with_type(std::string_view zone,
+                                                                  std::string_view record_name,
+                                                                  std::string_view ip,
+                                                                  int ttl,
+                                                                  std::string_view type) {
+    const std::string full_domain = record_name == "@" ? std::string{zone} : std::format("{}.{}", record_name, zone);
+    const std::string zone_owned{zone};
+    const std::string name_owned{record_name};
+    const std::string ip_owned{ip};
+    const std::string type_owned{type};
 
     auto record_id_res = get_record_id(full_domain);
     if (!record_id_res) return std::unexpected(record_id_res.error());
-    std::string record_id = *record_id_res;
+    const std::string record_id = *record_id_res;
 
     std::map<std::string, std::string> params;
     if (record_id.empty()) {
         // Create
         params = {
             {"Action",     "AddDomainRecord"},
-            {"DomainName", zone},
-            {"RR",         record_name},
-            {"Type",       type},
-            {"Value",      ip}
+            {"DomainName", zone_owned},
+            {"RR", name_owned},
+            {"Type", type_owned},
+            {"Value", ip_owned}
         };
     } else {
         // Update
         params = {
             {"Action",   "UpdateDomainRecord"},
             {"RecordId", record_id},
-            {"RR",       record_name},
-            {"Type",     type},
-            {"Value",    ip}
+            {"RR", name_owned},
+            {"Type", type_owned},
+            {"Value", ip_owned}
         };
     }
 
@@ -256,7 +272,7 @@ std::expected<void, std::string> AliyunProvider::upsert_record(const std::string
 
     auto resp = sign_and_request(params);
     if (!resp) {
-        std::string err = "Aliyun: request failed: " + resp.error();
+        const std::string err = std::format("Aliyun: request failed: {}", resp.error());
         logger::error("{}", err);
         return std::unexpected(err);
     }
@@ -264,13 +280,13 @@ std::expected<void, std::string> AliyunProvider::upsert_record(const std::string
     try {
         auto j = json::parse(resp->body);
         if (j.contains("Code") && j["Code"].is_string() && !j["Code"].get<std::string>().empty()) {
-            std::string err = "Aliyun API error: " + j.value("Code", "") + " - " + j.value("Message", "");
+            const std::string err = std::format("Aliyun API error: {} - {}", j.value("Code", ""), j.value("Message", ""));
             logger::error("{}", err);
             return std::unexpected(err);
         }
         return {};
     } catch (const std::exception& e) {
-        std::string err = std::string("Aliyun: JSON parse error: ") + e.what();
+        const std::string err = std::format("Aliyun: JSON parse error: {}", e.what());
         logger::error("{}", err);
         return std::unexpected(err);
     }
