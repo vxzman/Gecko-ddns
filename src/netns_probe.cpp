@@ -191,7 +191,7 @@ std::expected<ProbeResult, int> run_probe(std::string_view netns_name,
     }
 
     std::vector<std::string> storage;
-    storage.emplace_back("gecko-ddns");
+    storage.emplace_back("gekddns");
     storage.emplace_back("__probe");
     storage.emplace_back("--netns");
     storage.emplace_back(netns_name);

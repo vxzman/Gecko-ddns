@@ -21,7 +21,7 @@ fi
 # Get compiler version
 CXX_VERSION=$("$CXX_COMPILER" --version 2>/dev/null | head -n1 || echo "unknown")
 
-echo "Building gecko-ddns ${VERSION} ..."
+echo "Building gekddns ${VERSION} ..."
 echo "Compiler: ${CXX_COMPILER} (${CXX_VERSION})"
 
 # Clean build directory if compiler changes to avoid cache issues
@@ -51,4 +51,4 @@ fi
 
 cmake --build build -j"${JOBS}"
 
-echo "Build successful: $(pwd)/build/gecko-ddns"
+echo "Build successful: $(pwd)/build/gekddns"

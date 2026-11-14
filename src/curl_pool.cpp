@@ -8,7 +8,7 @@ namespace {
 
 void apply_handle_defaults(CURL* handle) {
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(handle, CURLOPT_USERAGENT, "gecko-ddns/2.0");
+    curl_easy_setopt(handle, CURLOPT_USERAGENT, "gekddns/2.0");
     curl_easy_setopt(handle, CURLOPT_TCP_KEEPALIVE, 1L);
     curl_easy_setopt(handle, CURLOPT_TCP_KEEPIDLE, 60L);
     curl_easy_setopt(handle, CURLOPT_TCP_KEEPINTVL, 60L);

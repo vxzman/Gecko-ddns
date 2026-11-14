@@ -38,7 +38,7 @@
 namespace {
 
 void print_version() {
-    std::println("gecko-ddns {}", APP_VERSION);
+    std::println("gekddns {}", APP_VERSION);
     if (std::string_view{APP_COMMIT}.size() > 0) std::println("commit: {}", APP_COMMIT);
     if (std::string_view{APP_BUILD_DATE}.size() > 0) std::println("built:  {}", APP_BUILD_DATE);
     if (std::string_view{APP_COMPILER}.size() > 0) std::println("compiler: {}", APP_COMPILER);
@@ -301,7 +301,7 @@ int run_cmd(const std::filesystem::path& config_path,
     }
 
     const std::filesystem::path base_dir = dir_path.empty() ? abs_config.parent_path() : dir_path;
-    logger::info("gecko-ddns starting with {} record(s)", cfg.records.size());
+    logger::info("gekddns starting with {} record(s)", cfg.records.size());
 
     const CurrentIp found = get_current_ip(cfg, timeout_sec);
     if (found.ip.empty()) {
@@ -353,7 +353,7 @@ int run_probe_cmd(std::string_view netns_name,
 } // namespace
 
 int main(int argc, char* argv[]) {
-    argparse::ArgumentParser program("gecko-ddns", APP_VERSION);
+    argparse::ArgumentParser program("gekddns", APP_VERSION);
     program.add_description("强大的动态 DNS 客户端 - 支持多域名多服务商");
 
     argparse::ArgumentParser run_parser("run");

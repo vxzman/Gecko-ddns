@@ -1,4 +1,4 @@
-# Gecko-ddns
+# gekddns
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20FreeBSD-yellow)](README.md)
@@ -14,7 +14,7 @@
 
 ```bash
 ./build.sh
-./build/gecko-ddns version
+./build/gekddns version
 ```
 
 FreeBSD 上建议先安装头文件库：
@@ -99,8 +99,8 @@ IP 没变则跳过更新。缓存文件 `cache.lastip` 只保留最后一次 IP�
 ## 运行
 
 ```bash
-./build/gecko-ddns run -c config.json
-./build/gecko-ddns run -c /etc/gecko-ddns/config.json -d /etc/gecko-ddns
+./build/gekddns run -c config.json
+./build/gekddns run -c /etc/gekddns/config.json -d /etc/gekddns
 ```
 
 | 参数 | 简写 | 默认 | 说明 |
@@ -145,21 +145,21 @@ IP 没变则跳过更新。缓存文件 `cache.lastip` 只保留最后一次 IP�
 
 ### systemd（vpn namespace）
 
-`/etc/systemd/system/gecko-ddns-vpn.service`：
+`/etc/systemd/system/gekddns-vpn.service`：
 
 ```ini
 [Unit]
-Description=gecko-ddns for vpn netns
+Description=gekddns for vpn netns
 After=vpn.target
 Wants=vpn.target
 
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/local/bin/gecko-ddns run -c /etc/gecko/vpn.json --netns vpn
+ExecStart=/usr/local/bin/gekddns run -c /etc/gekddns/vpn.json --netns vpn
 ```
 
-`/etc/systemd/system/gecko-ddns-vpn.timer`：
+`/etc/systemd/system/gekddns-vpn.timer`：
 
 ```ini
 [Timer]
@@ -178,34 +178,34 @@ Persistent=true
 
 ### systemd
 
-`/etc/systemd/system/gecko-ddns.service`：
+`/etc/systemd/system/gekddns.service`：
 
 ```ini
 [Unit]
-Description=Gecko-ddns DDNS Client
+Description=gekddns DDNS Client
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/gecko-ddns run -c /etc/gecko-ddns/config.json
-WorkingDirectory=/etc/gecko-ddns
+ExecStart=/usr/local/bin/gekddns run -c /etc/gekddns/config.json
+WorkingDirectory=/etc/gekddns
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/gecko-ddns.timer`：
+`/etc/systemd/system/gekddns.timer`：
 
 ```ini
 [Unit]
-Description=Run Gecko-ddns every 10 minutes
-Requires=gecko-ddns.service
+Description=Run gekddns every 10 minutes
+Requires=gekddns.service
 
 [Timer]
 OnBootSec=5min
 OnUnitActiveSec=10min
-Unit=gecko-ddns.service
+Unit=gekddns.service
 
 [Install]
 WantedBy=timers.target
@@ -213,10 +213,10 @@ WantedBy=timers.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now gecko-ddns.timer
+sudo systemctl enable --now gekddns.timer
 ```
 
-日志在 stdout。systemd 下用 `journalctl -u gecko-ddns.service` 查看。
+日志在 stdout。systemd 下用 `journalctl -u gekddns.service` 查看。
 
 ## 许可
 

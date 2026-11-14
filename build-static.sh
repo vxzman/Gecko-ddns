@@ -5,7 +5,7 @@ VERSION="${1:-2.0}"
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "")
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-echo "Building gecko-ddns ${VERSION} (Static musl build via Alpine/Docker)..."
+echo "Building gekddns ${VERSION} (Static musl build via Alpine/Docker)..."
 
 # Ensure output directory files belong to current user
 USER_ID=$(id -u)
@@ -27,11 +27,11 @@ docker run --rm -v "$(pwd)":/src -w /src alpine:latest sh -c "
     -DAPP_COMMIT='${COMMIT}' \
     -DAPP_BUILD_DATE='${BUILD_DATE}'
   cmake --build build-static -j\$(nproc)
-  strip -s build-static/gecko-ddns
+  strip -s build-static/gekddns
   chown -R ${USER_ID}:${GROUP_ID} build-static
 "
 
 echo "======================================================="
-echo "Static build successful: $(pwd)/build-static/gecko-ddns"
-file "$(pwd)/build-static/gecko-ddns"
+echo "Static build successful: $(pwd)/build-static/gekddns"
+file "$(pwd)/build-static/gekddns"
 echo "======================================================="

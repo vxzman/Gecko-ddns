@@ -6,7 +6,7 @@ if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
 endif()
 
-project(gecko-ddns VERSION 1.0.0 LANGUAGES CXX)
+project(gekddns VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -101,26 +101,26 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     # FreeBSD uses raw Netlink socket (FreeBSD 14+) for IPv6 address retrieval
     list(APPEND SOURCES src/ip_getter_freebsd.cpp)
 else()
-    message(FATAL_ERROR "gecko-ddns supports only Linux and FreeBSD")
+    message(FATAL_ERROR "gekddns supports only Linux and FreeBSD")
 endif()
 
-add_executable(gecko-ddns ${SOURCES})
+add_executable(gekddns ${SOURCES})
 
-target_include_directories(gecko-ddns PRIVATE
+target_include_directories(gekddns PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 if(BUILD_STATIC)
-    target_link_libraries(gecko-ddns PRIVATE
+    target_link_libraries(gekddns PRIVATE
         ${CURL_STATIC_LIBRARIES}
         ${OPENSSL_STATIC_LIBRARIES}
         nlohmann_json::nlohmann_json
         argparse::argparse
         pthread
     )
-    target_link_options(gecko-ddns PRIVATE -static -no-pie)
+    target_link_options(gekddns PRIVATE -static -no-pie)
 else()
-    target_link_libraries(gecko-ddns PRIVATE
+    target_link_libraries(gekddns PRIVATE
         CURL::libcurl
         OpenSSL::Crypto
         nlohmann_json::nlohmann_json
@@ -136,7 +136,7 @@ set(APP_COMMIT  ""    CACHE STRING "Git commit hash")
 set(APP_BUILD_DATE "" CACHE STRING "Build date (UTC ISO 8601)")
 set(APP_COMPILER "" CACHE STRING "Compiler version string")
 
-target_compile_definitions(gecko-ddns PRIVATE
+target_compile_definitions(gekddns PRIVATE
     APP_VERSION="${APP_VERSION}"
     APP_COMMIT="${APP_COMMIT}"
     APP_BUILD_DATE="${APP_BUILD_DATE}"
@@ -150,4 +150,4 @@ target_link_libraries(probe_parse_test PRIVATE nlohmann_json::nlohmann_json)
 add_test(NAME probe_parse_test COMMAND probe_parse_test)
 
 # ─── Install ───────────────────────────────────────────────────────────────────
-install(TARGETS gecko-ddns DESTINATION bin)
+install(TARGETS gekddns DESTINATION bin)
